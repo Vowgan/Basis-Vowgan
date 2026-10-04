@@ -392,7 +392,7 @@ public abstract partial class BasisHandHeldCameraInteractable : BasisPickupInter
     [SerializeReference] private BasisParentConstraint cameraPinConstraint;
     [SerializeReference] private BasisFlyCamera flyCamera;
 
-    private const float cameraDefaultScale = 0.00015f;
+    private const float cameraDefaultScale = 1f;
 
     [Tooltip("Fraction of the desktop view the camera is allowed to cover before it is scaled down.")]
     [Range(0.1f, 1f)] public float desktopScreenFitFraction = 0.85f;
