@@ -1,0 +1,65 @@
+<ui:UXML xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:ui="UnityEngine.UIElements" xmlns:uie="UnityEditor.UIElements" noNamespaceSchemaLocation="../UIElementsSchema/UIElements.xsd" editor-extension-mode="False">
+    <ui:Image name="background" source="project://database/Assets/Vowgan%20Camera%20Dev/Screenshot_20260918_202858_1920x1080.png?fileID=2800000&amp;guid=0618b303d4b092a45afe3fd163ed2c55&amp;type=3#Screenshot_20260918_202858_1920x1080" scale-mode="ScaleAndCrop" style="border-top-left-radius: 150px; border-top-right-radius: 150px; border-bottom-right-radius: 150px; border-bottom-left-radius: 150px; overflow: hidden; flex-shrink: 1; font-size: 22px; flex-grow: 1;">
+        <ui:VisualElement name="hud-top" style="justify-content: center; position: absolute; top: 0; left: 0; right: 0; bottom: auto; flex-direction: row;">
+            <ui:Label text="60 FPS" name="fps-label" style="color: rgb(255, 255, 255); -unity-text-align: middle-center; -unity-font-style: bold; padding-top: 5px; padding-right: 5px; padding-bottom: 5px; padding-left: 5px; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0;"/>
+            <ui:Label text="1920x1080" name="resolution-label" style="color: rgb(255, 255, 255); -unity-text-align: middle-center; -unity-font-style: bold; padding-top: 5px; padding-right: 5px; padding-bottom: 5px; padding-left: 5px; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0;"/>
+        </ui:VisualElement>
+        <ui:VisualElement name="hud-bottom" style="justify-content: center; position: absolute; top: auto; left: 0; right: 0; bottom: 0; flex-direction: row; padding-top: 10px; padding-right: 10px; padding-bottom: 10px; padding-left: 10px; align-items: center;">
+            <ui:Button text="" icon-image="" name="primary-action-button" style="border-top-left-radius: 200px; border-top-right-radius: 200px; border-bottom-right-radius: 200px; border-bottom-left-radius: 200px; padding-top: 0; padding-right: 0; padding-bottom: 0; padding-left: 0; margin-top: 20px; margin-right: 20px; margin-bottom: 20px; margin-left: 20px; width: 150px; height: 150px; border-top-width: 10px; border-right-width: 10px; border-bottom-width: 10px; border-left-width: 10px; border-left-color: rgb(223, 72, 72); border-right-color: rgb(223, 72, 72); border-top-color: rgb(223, 72, 72); border-bottom-color: rgb(223, 72, 72); background-color: rgb(255, 255, 255);"/>
+        </ui:VisualElement>
+        <ui:VisualElement name="hud-left" style="position: absolute; top: 0; left: 0; right: auto; bottom: 0; flex-direction: row;">
+            <ui:VisualElement name="onscreen-controls" style="justify-content: center; background-color: rgba(0, 0, 0, 0.6); padding-top: 10px; padding-right: 10px; padding-bottom: 10px; padding-left: 10px; width: 180px;">
+                <ui:Button text="Zoom" style="border-top-left-radius: 10px; border-top-right-radius: 10px; border-bottom-right-radius: 10px; border-bottom-left-radius: 10px; height: 80px;"/>
+                <ui:Button text="Focus" style="border-top-left-radius: 10px; border-top-right-radius: 10px; border-bottom-right-radius: 10px; border-bottom-left-radius: 10px; height: 80px;"/>
+                <ui:Button text="Exposure" style="border-top-left-radius: 10px; border-top-right-radius: 10px; border-bottom-right-radius: 10px; border-bottom-left-radius: 10px; height: 80px;"/>
+            </ui:VisualElement>
+            <ui:VisualElement name="onscreen-context" style="flex-direction: row;">
+                <ui:VisualElement name="onscreen-depth" style="flex-grow: 1; flex-direction: row; display: none;">
+                    <ui:VisualElement style="flex-grow: 1; align-items: center;">
+                        <ui:Slider label="" value="42" high-value="100" direction="Vertical" show-input-field="true" fill="true" style="flex-grow: 1;"/>
+                        <ui:Label text="Distance" style="color: rgb(255, 255, 255); -unity-text-align: upper-center; -unity-font-style: bold; padding-top: 0; padding-right: 0; padding-bottom: 0; padding-left: 0; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0; rotate: -90deg; translate: -24px -117px; font-size: 30px;"/>
+                    </ui:VisualElement>
+                    <ui:VisualElement style="flex-grow: 1; align-items: center;">
+                        <ui:Slider label="" value="42" high-value="100" direction="Vertical" show-input-field="true" fill="true" style="flex-grow: 1;"/>
+                        <ui:Label text="Aperture" style="color: rgb(255, 255, 255); -unity-text-align: upper-center; -unity-font-style: bold; padding-top: 0; padding-right: 0; padding-bottom: 0; padding-left: 0; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0; rotate: -90deg; translate: -24px -117px; font-size: 30px;"/>
+                    </ui:VisualElement>
+                </ui:VisualElement>
+                <ui:VisualElement name="onscreen-zoom" style="flex-grow: 1; flex-direction: row; display: flex;">
+                    <ui:VisualElement style="flex-grow: 1; justify-content: center; margin-top: 10px; margin-right: 10px; margin-bottom: 10px; margin-left: 10px;">
+                        <ui:VisualElement style="background-color: rgba(0, 0, 0, 0.502); border-top-left-radius: 50px; border-top-right-radius: 50px; border-bottom-right-radius: 50px; border-bottom-left-radius: 50px; padding-top: 10px; padding-right: 10px; padding-bottom: 10px; padding-left: 10px;">
+                            <ui:Button text="C" style="border-top-left-radius: 40px; border-top-right-radius: 40px; border-bottom-right-radius: 40px; border-bottom-left-radius: 40px; width: 80px; height: 80px; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0; padding-top: 0; padding-right: 0; padding-bottom: 0; padding-left: 0;"/>
+                            <ui:Button text="4" style="border-top-left-radius: 40px; border-top-right-radius: 40px; border-bottom-right-radius: 40px; border-bottom-left-radius: 40px; width: 80px; height: 80px; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0; padding-top: 0; padding-right: 0; padding-bottom: 0; padding-left: 0;"/>
+                            <ui:Button text="2" style="border-top-left-radius: 40px; border-top-right-radius: 40px; border-bottom-right-radius: 40px; border-bottom-left-radius: 40px; width: 80px; height: 80px; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0; padding-top: 0; padding-right: 0; padding-bottom: 0; padding-left: 0;"/>
+                            <ui:Button text="1" style="border-top-left-radius: 40px; border-top-right-radius: 40px; border-bottom-right-radius: 40px; border-bottom-left-radius: 40px; width: 80px; height: 80px; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0; padding-top: 0; padding-right: 0; padding-bottom: 0; padding-left: 0;"/>
+                            <ui:Button text=".6" style="border-top-left-radius: 40px; border-top-right-radius: 40px; border-bottom-right-radius: 40px; border-bottom-left-radius: 40px; width: 80px; height: 80px; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0; padding-top: 0; padding-right: 0; padding-bottom: 0; padding-left: 0;"/>
+                        </ui:VisualElement>
+                    </ui:VisualElement>
+                    <ui:VisualElement style="flex-grow: 1; align-items: center; width: 92px;">
+                        <ui:Slider label="" value="42" high-value="100" direction="Vertical" show-input-field="true" fill="true" style="flex-grow: 1;"/>
+                        <ui:Label text="Field Of View" style="color: rgb(255, 255, 255); -unity-text-align: upper-center; -unity-font-style: bold; padding-top: 0; padding-right: 0; padding-bottom: 0; padding-left: 0; margin-top: 0; margin-right: 0; margin-bottom: 0; margin-left: 0; rotate: -90deg; translate: -26px -149px; font-size: 30px;"/>
+                    </ui:VisualElement>
+                </ui:VisualElement>
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="hud-right" style="justify-content: center; position: absolute; top: 0; left: auto; right: 0; bottom: 0; flex-direction: row-reverse;">
+            <ui:VisualElement name="mode-switch" style="justify-content: center; background-color: rgba(0, 0, 0, 0.8); align-items: center; width: 150px; padding-right: 20px; padding-left: 10px;">
+                <ui:Button text="" icon-image="project://database/Assets/Vowgan%20Camera%20Dev/Icons/camera.png?fileID=2800000&amp;guid=5db354daa5477c54aaee8de8ef2690a5&amp;type=3#camera" style="width: 80px; height: 80px; margin-top: 5px; margin-right: 5px; margin-bottom: 5px; margin-left: 5px; padding-top: 10px; padding-right: 10px; padding-bottom: 10px; padding-left: 10px; border-top-left-radius: 50px; border-top-right-radius: 50px; border-bottom-right-radius: 50px; border-bottom-left-radius: 50px;"/>
+                <ui:Button text="" icon-image="project://database/Assets/Vowgan%20Camera%20Dev/Icons/video%20camera.png?fileID=2800000&amp;guid=fd4bd1a950b832d4e9b306108ffdb501&amp;type=3#video camera" style="width: 100px; height: 100px; margin-top: 5px; margin-right: 5px; margin-bottom: 5px; margin-left: 5px; padding-top: 10px; padding-right: 10px; padding-bottom: 10px; padding-left: 10px; border-top-left-radius: 50px; border-top-right-radius: 50px; border-bottom-right-radius: 50px; border-bottom-left-radius: 50px;"/>
+                <ui:Button text="" icon-image="project://database/Assets/Vowgan%20Camera%20Dev/Icons/gear.png?fileID=2800000&amp;guid=e0641da1822a2d3458217a514fc027da&amp;type=3#gear" style="width: 80px; height: 80px; margin-top: 5px; margin-right: 5px; margin-bottom: 5px; margin-left: 5px; padding-top: 10px; padding-right: 10px; padding-bottom: 10px; padding-left: 10px; border-top-left-radius: 50px; border-top-right-radius: 50px; border-bottom-right-radius: 50px; border-bottom-left-radius: 50px;"/>
+            </ui:VisualElement>
+            <ui:VisualElement name="mode-options" style="justify-content: center; background-color: rgba(0, 0, 0, 0.6); width: 200px; padding-top: 5px; padding-right: 5px; padding-bottom: 5px; padding-left: 5px;">
+                <ui:Button text="Timer" style="border-top-left-radius: 10px; border-top-right-radius: 10px; border-bottom-right-radius: 10px; border-bottom-left-radius: 10px; height: 80px;"/>
+                <ui:Button text="Selfie" style="border-top-left-radius: 10px; border-top-right-radius: 10px; border-bottom-right-radius: 10px; border-bottom-left-radius: 10px; height: 80px;"/>
+                <ui:Button text="Flight" style="border-top-left-radius: 10px; border-top-right-radius: 10px; border-bottom-right-radius: 10px; border-bottom-left-radius: 10px; height: 80px;"/>
+                <ui:Button text="1080p" style="border-top-left-radius: 10px; border-top-right-radius: 10px; border-bottom-right-radius: 10px; border-bottom-left-radius: 10px; height: 80px;"/>
+            </ui:VisualElement>
+        </ui:VisualElement>
+        <ui:VisualElement name="settings-container" style="flex-grow: 1; position: absolute; top: 0; left: 0; right: 0; bottom: 0; display: none;">
+            <ui:ScrollView style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; color: rgb(255, 255, 255); margin-top: 80px; margin-right: 80px; margin-bottom: 80px; margin-left: 80px; background-color: rgba(0, 0, 0, 0.749); border-top-left-radius: 20px; border-top-right-radius: 20px; border-bottom-right-radius: 20px; border-bottom-left-radius: 20px; padding-top: 10px; padding-right: 10px; padding-bottom: 10px; padding-left: 10px;">
+                <ui:Toggle label="Toggle"/>
+                <ui:Slider label="Slider" value="42" high-value="100"/>
+                <ui:DropdownField label="Image Type" index="0" choices="PNG,EXR"/>
+            </ui:ScrollView>
+        </ui:VisualElement>
+    </ui:Image>
+</ui:UXML>
