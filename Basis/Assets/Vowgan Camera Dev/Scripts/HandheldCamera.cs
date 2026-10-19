@@ -1,76 +1,36 @@
-using System;
-using System.Collections.Generic;
+using Unity.Scripting.LifecycleManagement;
 using UnityEngine;
 
-public class HandheldCamera : MonoBehaviour
+namespace Vowgan.HandheldCameraSystem
 {
-
-    public static HandheldCamera instance;
-
-
-    #region Camera Mode
-
-    public static CameraMode selectedMode;
-
-    public static event Action<CameraMode> onModeAdded;
-    public static event Action<CameraMode> onModeRemoved;
-    public static event Action<CameraMode> onModeSelected;
-
-    private static HashSet<CameraMode> _cameraModes { get; } = new();
-
-
-    public static void AddCameraMode(CameraMode mode)
+    public class HandheldCamera : MonoBehaviour
     {
-        _cameraModes.Add(mode);
-        onModeAdded?.Invoke(mode);
-    }
 
-    public static void RemoveCameraMode(CameraMode mode)
-    {
-        _cameraModes.Remove(mode);
-        onModeRemoved?.Invoke(mode);
-    }
-
-    public static void SelectMode(CameraMode mode)
-    {
-        selectedMode = mode;
-        onModeSelected?.Invoke(mode);
-    }
-
-    #endregion
+        [AutoStaticsCleanup] public static HandheldCamera instance { get; private set; }
+        [AutoStaticsCleanup] public static CameraModeManagement modeManagement { get; } = new();
 
 
-    #region Camera Instance
+        [SerializeField] private Camera _camera;
 
-    private void Awake()
-    {
-        if (instance && instance != this) instance.Close();
 
-        instance = this;
 
-        foreach (CameraMode mode in _cameraModes)
+        private void Awake()
         {
-            onModeAdded?.Invoke(mode);
+            if (instance != this) instance?.Close();
+
+            instance = this;
+
+            modeManagement.RunAllModesAdded();
+        }
+
+        private void OnDestroy()
+        {
+            if (instance == this) instance = null;
+        }
+
+        public void Close()
+        {
+            Destroy(gameObject);
         }
     }
-
-    private void OnDestroy()
-    {
-        if (instance == this) instance = null;
-    }
-
-    public void Close()
-    {
-        Destroy(gameObject);
-    }
-
-    #endregion
-
-
-
-    public static void RunPrimaryAction()
-    {
-        if (selectedMode) selectedMode.onPrimaryButtonPressed?.Invoke();
-    }
-
 }

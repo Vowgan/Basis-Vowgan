@@ -1,53 +1,56 @@
 using System.Collections.Generic;
 using UnityEngine;
 
-public class CameraTabGroup : MonoBehaviour
+namespace Vowgan.HandheldCameraSystem
 {
-
-    [field: SerializeField] public FocusableButton currentTab { get; private set; }
-    [field: SerializeField] public GameObject currentPage { get; private set; }
-
-    [SerializeField] private Dictionary<FocusableButton, GameObject> _tabPages = new();
-
-
-
-    private void Awake()
+    public class CameraTabGroup : MonoBehaviour
     {
-        if (_tabPages.ContainsKey(currentTab))
+
+        [field: SerializeField] public FocusableButton currentTab { get; private set; }
+        [field: SerializeField] public GameObject currentPage { get; private set; }
+
+        [SerializeField] private Dictionary<FocusableButton, GameObject> _tabPages = new();
+
+
+
+        private void Awake()
         {
-            OnTabSelected(currentTab);
+            if (_tabPages.ContainsKey(currentTab))
+            {
+                OnTabSelected(currentTab);
+            }
         }
-    }
 
-    public void AddTab(FocusableButton tab, GameObject page, bool switchImmediate = false)
-    {
-        _tabPages[tab] = page;
-        tab.onClick.AddListener(() => OnTabSelected(tab));
+        public void AddTab(FocusableButton tab, GameObject page, bool switchImmediate = false)
+        {
+            _tabPages[tab] = page;
+            tab.onClick.AddListener(() => OnTabSelected(tab));
 
-        if (switchImmediate) OnTabSelected(tab);
-    }
+            if (switchImmediate) OnTabSelected(tab);
+        }
 
-    public void RemoveTab(FocusableButton tab)
-    {
-        GameObject page = _tabPages[tab];
+        public void RemoveTab(FocusableButton tab)
+        {
+            GameObject page = _tabPages[tab];
 
-        _tabPages.Remove(tab);
-        tab.onClick.RemoveListener(() => OnTabSelected(tab));
+            _tabPages.Remove(tab);
+            tab.onClick.RemoveListener(() => OnTabSelected(tab));
 
-        if (currentTab == tab)
-            OnTabSelected(null);
-    }
+            if (currentTab == tab)
+                OnTabSelected(null);
+        }
 
-    private void OnTabSelected(FocusableButton tab)
-    {
-        if (tab == currentTab) return;
+        private void OnTabSelected(FocusableButton tab)
+        {
+            if (tab == currentTab) return;
 
-        currentTab?.SetSelected(false);
-        currentTab = tab;
-        currentTab?.SetSelected(true);
+            currentTab?.SetFocused(false);
+            currentTab = tab;
+            currentTab?.SetFocused(true);
 
-        currentPage?.SetActive(false);
-        currentPage = _tabPages[tab];
-        currentPage?.SetActive(true);
+            currentPage?.SetActive(false);
+            currentPage = _tabPages[tab];
+            currentPage?.SetActive(true);
+        }
     }
 }

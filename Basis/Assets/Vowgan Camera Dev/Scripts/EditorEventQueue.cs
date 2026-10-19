@@ -6,7 +6,8 @@ using UnityEngine;
 
 /// <summary>
 /// Safely queue an event to happen at the next available editor step.
-/// This is the runtime-safe wrapper for EditorApplication.delayCall
+/// This is the runtime-safe wrapper for EditorApplication.delayCall, although it only functions in-editor.
+/// Use this in conjunction with OnValidate to properly drive values unsuited for the OnValidate step.
 /// </summary>
 public static class EditorEventQueue
 {
