@@ -30,6 +30,10 @@ namespace Basis.BTween
         public Easing Ease = Easing.OutSine;
         public float StartTime;
         public float EndTime;
+        /// <summary>
+        /// Passes the current progress normalized as a 0 - 1 range.
+        /// </summary>
+        public Action<float> OnProcess;
         public Action OnComplete;
 
         private const int MAX_TWEEN_COUNT = 64;
@@ -117,6 +121,8 @@ namespace Basis.BTween
         /// </summary>
         public virtual bool Process(double currentTime)
         {
+            float percent = Mathf.InverseLerp(StartTime, EndTime, (float)currentTime);
+            OnProcess?.Invoke(percent);
             if (currentTime >= EndTime)
             {
                 Finish();
