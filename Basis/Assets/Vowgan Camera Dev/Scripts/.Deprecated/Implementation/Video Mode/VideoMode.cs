@@ -4,15 +4,15 @@ using UnityEngine;
 
 namespace Vowgan.HandheldCameraSystem
 {
-    public class VideoMode : ICameraMode
+    public class VideoMode : CameraMode
     {
 
         public string title => "Video";
         public Sprite icon => null;
         public int order => 0;
 
-        private CameraModeEntry _timerEntry = new("Start Timer", null, 1, OnTimerChanged);
-        private CameraModeEntry _resolutionEntry = new("Video Resolution", null, 0, OnResolutionChanged);
+        private CameraModeFeatureExperimental _timerFeature = new("Start Timer", null, 1, OnTimerChanged);
+        private CameraModeFeatureExperimental _resolutionFeature = new("Video Resolution", null, 0, OnResolutionChanged);
 
 
         [UsedImplicitly]
@@ -20,10 +20,10 @@ namespace Vowgan.HandheldCameraSystem
         public static void AddToCamera() => HandheldCamera.modeManagement.AddCameraMode(new VideoMode());
 
 
-        public CameraModeEntry[] GetEntries() => new[]
+        public CameraModeFeatureExperimental[] GetEntries() => new[]
         {
-            _timerEntry,
-            _resolutionEntry,
+            _timerFeature,
+            _resolutionFeature,
         };
 
         public Action onPrimaryButtonPressed => () => { Debug.Log("Video Mode action pressed."); };

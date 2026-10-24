@@ -1,12 +1,12 @@
 using TMPro;
 using UnityEngine;
-using UnityEngine.UI;
 
 namespace Vowgan.HandheldCameraSystem
 {
     [DefaultExecutionOrder(-1)]
     public class HandheldCameraUI : MonoBehaviour
     {
+
         [SerializeField] private HandheldCamera _hhc;
 
         [Header("Prefabs")]
@@ -20,9 +20,7 @@ namespace Vowgan.HandheldCameraSystem
         [SerializeField] private RectTransform _onscreenUIContainer;
         [SerializeField] private RectTransform _onscreenUIContextContainer;
         [SerializeField] private TMP_Text _screenDisplayLabel;
-        [SerializeField] private Button _primaryActionButton;
-        [SerializeField] private Image _primaryActionIcon;
-        [SerializeField] private TMP_Text _primaryActionLabel;
+        [SerializeField] private TimerButton _primaryActionButton;
 
         private CameraModeManagement _modeManagement;
 
@@ -40,11 +38,11 @@ namespace Vowgan.HandheldCameraSystem
             DestroyChildren(_modeEntryContainer);
         }
 
-        public void BuildMode(ICameraMode mode)
+        public void BuildMode(CameraMode mode)
         {
             FocusableButton modeButton = Instantiate(_modeButton, _modeContainer);
             modeButton.SetIcon(mode.icon);
-            modeButton.SetLabel(mode.title);
+            modeButton.SetLabel(mode.name);
             modeButton.SetFocused(false);
 
             modeButton.onClick.AddListener(() => _modeManagement.SelectMode(mode));
@@ -58,11 +56,11 @@ namespace Vowgan.HandheldCameraSystem
             }
         }
 
-        private void SetCurrentMode(ICameraMode mode)
+        private void SetCurrentMode(CameraMode mode)
         {
             DestroyChildren(_modeEntryContainer);
 
-            foreach (CameraModeEntry entry in mode.GetEntries())
+            foreach (CameraModeFeatureExperimental entry in mode.GetEntries())
             {
                 FocusableButton entryButton = Instantiate(_modeEntryButton, _modeEntryContainer);
                 entryButton.SetIcon(entry.icon);

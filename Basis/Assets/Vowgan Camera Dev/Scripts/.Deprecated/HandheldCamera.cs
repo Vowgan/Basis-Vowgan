@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace Vowgan.HandheldCameraSystem
 {
-    public class HandheldCamera : MonoBehaviour
+    public partial class HandheldCamera : MonoBehaviour
     {
 
         [AutoStaticsCleanup] public static HandheldCamera instance { get; private set; }
@@ -13,7 +13,6 @@ namespace Vowgan.HandheldCameraSystem
         [SerializeField] private Camera _camera;
 
 
-
         private void Awake()
         {
             if (instance != this) instance?.Close();
@@ -21,6 +20,14 @@ namespace Vowgan.HandheldCameraSystem
             instance = this;
 
             modeManagement.RunAllModesAdded();
+
+            HandheldCameraSettings.AddLoadListener(OnCameraSettingsLoaded);
+        }
+
+        private void OnCameraSettingsLoaded(HandheldCameraSettings settings)
+        {
+            settings.RegisterBool("MyBool", true);
+            settings.SetNumber("MyNumber", 42);
         }
 
         private void OnDestroy()

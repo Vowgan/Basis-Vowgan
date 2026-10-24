@@ -15,7 +15,7 @@ GameObject:
   - component: {fileID: 4209498198473671456}
   - component: {fileID: 4906469618270831655}
   m_Layer: 11
-  m_Name: Camera Mode Entry Button
+  m_Name: Mode Feature Button
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0

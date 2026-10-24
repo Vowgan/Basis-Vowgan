@@ -3,7 +3,7 @@ using UnityEngine;
 
 namespace Vowgan.HandheldCameraSystem
 {
-    public class CameraModeEntry
+    public class CameraModeFeatureExperimental
     {
 
         public string title { get; private set; }
@@ -17,7 +17,7 @@ namespace Vowgan.HandheldCameraSystem
         public event Action onDeselect;
 
 
-        public CameraModeEntry(string title, Sprite icon, int order, Action onRun)
+        public CameraModeFeatureExperimental(string title, Sprite icon, int order, Action onRun)
         {
             this.title = title;
             label = title;
@@ -27,7 +27,7 @@ namespace Vowgan.HandheldCameraSystem
             this.onRun = onRun;
         }
 
-        public CameraModeEntry(string title, Sprite icon, int order, bool selected, Action onSelect, Action onDeselect)
+        public CameraModeFeatureExperimental(string title, Sprite icon, int order, bool selected, Action onSelect, Action onDeselect)
         {
             this.title = title;
             label = title;

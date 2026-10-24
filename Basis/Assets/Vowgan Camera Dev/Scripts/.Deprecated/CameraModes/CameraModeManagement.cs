@@ -5,21 +5,21 @@ namespace Vowgan.HandheldCameraSystem
 {
     public class CameraModeManagement
     {
-        public ICameraMode selectedMode;
-        public event Action<ICameraMode> onModeAdded;
-        public event Action<ICameraMode> onModeRemoved;
-        public event Action<ICameraMode> onModeSelected;
+        public CameraMode selectedMode;
+        public event Action<CameraMode> onModeAdded;
+        public event Action<CameraMode> onModeRemoved;
+        public event Action<CameraMode> onModeSelected;
 
-        private HashSet<ICameraMode> _cameraModes { get; } = new();
+        private HashSet<CameraMode> _cameraModes { get; } = new();
 
 
-        public void AddCameraMode(ICameraMode mode)
+        public void AddCameraMode(CameraMode mode)
         {
             _cameraModes.Add(mode);
             onModeAdded?.Invoke(mode);
         }
 
-        public void RemoveCameraMode(ICameraMode mode)
+        public void RemoveCameraMode(CameraMode mode)
         {
             _cameraModes.Remove(mode);
             onModeRemoved?.Invoke(mode);
@@ -27,7 +27,7 @@ namespace Vowgan.HandheldCameraSystem
 
 
 
-        public void SelectMode(ICameraMode mode)
+        public void SelectMode(CameraMode mode)
         {
             selectedMode = mode;
             onModeSelected?.Invoke(mode);
@@ -35,7 +35,7 @@ namespace Vowgan.HandheldCameraSystem
 
         public void RunAllModesAdded()
         {
-            foreach (ICameraMode mode in _cameraModes)
+            foreach (CameraMode mode in _cameraModes)
             {
                 onModeAdded?.Invoke(mode);
             }
