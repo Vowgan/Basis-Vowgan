@@ -1,8 +1,9 @@
-﻿using UnityEngine;
+﻿using JetBrains.Annotations;
+using UnityEngine;
 
 public sealed class VideoMode : CameraMode<VideoMode>
 {
-
+    [UsedImplicitly]
     [RuntimeInitializeOnLoadMethod]
     private static void AddToCamera() => HandheldCameraData.AddMode(new VideoMode());
 

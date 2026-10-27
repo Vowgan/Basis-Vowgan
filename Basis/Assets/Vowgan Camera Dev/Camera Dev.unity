@@ -1215,6 +1215,37 @@ RectTransform:
   m_AnchoredPosition: {x: 0, y: -5}
   m_SizeDelta: {x: 0, y: -20}
   m_Pivot: {x: 0.5, y: 0.5}
+--- !u!1 &277638621
+GameObject:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  serializedVersion: 6
+  m_Component:
+  - component: {fileID: 277638622}
+  m_Layer: 11
+  m_Name: Camera Point
+  m_TagString: Untagged
+  m_Icon: {fileID: 0}
+  m_NavMeshLayer: 0
+  m_StaticEditorFlags: 0
+  m_IsActive: 1
+--- !u!4 &277638622
+Transform:
+  m_ObjectHideFlags: 0
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 277638621}
+  serializedVersion: 2
+  m_LocalRotation: {x: -0, y: -1, z: -0, w: 0}
+  m_LocalPosition: {x: 0, y: 0, z: -0.03}
+  m_LocalScale: {x: 1, y: 1, z: 1}
+  m_ConstrainProportionsScale: 0
+  m_Children: []
+  m_Father: {fileID: 1425274531}
+  m_LocalEulerAnglesHint: {x: 0, y: 0, z: 0}
 --- !u!1001 &324075852
 PrefabInstance:
   m_ObjectHideFlags: 0
@@ -1717,6 +1748,9 @@ PrefabInstance:
     - targetCorrespondingSourceObject: {fileID: -8679921383154817045, guid: 8a07f78d1a4e6514095d674c574a56d3, type: 3}
       insertIndex: -1
       addedObject: {fileID: 593385761}
+    - targetCorrespondingSourceObject: {fileID: -8679921383154817045, guid: 8a07f78d1a4e6514095d674c574a56d3, type: 3}
+      insertIndex: -1
+      addedObject: {fileID: 277638622}
     - targetCorrespondingSourceObject: {fileID: -8679921383154817045, guid: 8a07f78d1a4e6514095d674c574a56d3, type: 3}
       insertIndex: -1
       addedObject: {fileID: 1745998827}
@@ -8521,7 +8555,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 44d6bc5df35f42ef8cf03745f00d4392, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HandheldCameraPickup
-  ui:
+  _ui:
     primaryButton: {fileID: 1837747452}
     onScreenLog: {fileID: 1739622310}
     modeOptionContainer: {fileID: 1147825654}
@@ -8532,6 +8566,15 @@ MonoBehaviour:
     hudOptionButton: {fileID: 7806339916560872249, guid: 6db462bf65c44af4088dd364b3229b62, type: 3}
     hudFeatureContainer: {fileID: 1827176730}
     hudFeatureButton: {fileID: 0}
+  _camera: {fileID: 1745998830}
+  _previewRender:
+    <width>k__BackingField: 1920
+    <height>k__BackingField: 1080
+    <format>k__BackingField: 0
+    <depth>k__BackingField: 24
+    <framerate>k__BackingField: 30
+    <msaaSamples>k__BackingField: 1
+  _rtMaterial: {fileID: 2100000, guid: ebd1856110973ae44a2be820725f7fcd, type: 2}
 --- !u!1 &1440577968
 GameObject:
   m_ObjectHideFlags: 0

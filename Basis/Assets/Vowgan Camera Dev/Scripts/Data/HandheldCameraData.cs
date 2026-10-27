@@ -3,9 +3,9 @@
 /// <summary>
 /// Total structure for the Handheld Camera. All interaction should be dependency-injected here.
 /// This should be fully global and uninstanced.
-///<example>
-///    [RuntimeInitializeOnLoadMethod]
-///    private static void AddToCamera() => HandheldCameraData.AddMode(new PhotoMode());
+/// <example>
+/// [RuntimeInitializeOnLoadMethod]
+/// private static void AddToCamera() => HandheldCameraData.AddMode(new PhotoMode());
 /// </example>
 /// </summary>
 public static partial class HandheldCameraData

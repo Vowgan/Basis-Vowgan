@@ -9,6 +9,6 @@ public abstract class CameraFeature : ISortable
 
 public abstract class CameraFeature<TValue> : CameraFeature
 {
-    public abstract ValueChangedField<TValue> valueField { get; }
+    public abstract ValueField<TValue> valueField { get; }
     public abstract void SetValue(TValue value);
 }

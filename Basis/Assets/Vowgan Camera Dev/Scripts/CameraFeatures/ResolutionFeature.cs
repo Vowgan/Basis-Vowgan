@@ -1,4 +1,5 @@
 ﻿
+using JetBrains.Annotations;
 using UnityEngine;
 
 public enum ImageResolution
@@ -12,16 +13,15 @@ public enum ImageResolution
 public sealed class ResolutionFeature : CameraFeature<ImageResolution>
 {
 
+    [UsedImplicitly]
     [RuntimeInitializeOnLoadMethod]
-    private static void AddModes()
-    {
-        PhotoMode.AddFeature(new ResolutionFeature());
-    }
+    private static void AddModes() => PhotoMode.AddFeature(new ResolutionFeature());
+
 
 
     public override string name => "Resolution";
     public override int order => 0;
-    public override ValueChangedField<ImageResolution> valueField { get; } = new(ImageResolution.x720);
+    public override ValueField<ImageResolution> valueField { get; } = new(ImageResolution.x720);
 
     public override void SetValue(ImageResolution newValue)
     {

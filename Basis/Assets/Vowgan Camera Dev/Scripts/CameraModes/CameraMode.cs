@@ -3,14 +3,17 @@
 /// <summary>
 /// When adding to the camera, it is recommended to use this method:
 /// <example>
-///    [RuntimeInitializeOnLoadMethod]
-///    private static void AddToCamera() => PhotoMode.AddFeature(new TimerFeature());
+/// [UsedImplicitly]
+/// [RuntimeInitializeOnLoadMethod]
+/// private static void AddModes() => PhotoMode.AddFeature(new ResolutionFeature());
 /// </example>
 /// </summary>
 public abstract class CameraMode : ISortable
 {
     public abstract string name { get; }
     public abstract int order { get; }
+    // Features are any defining part of a Camera Mode, though are often T typed to a specific mode.
+    // This needs to be implemented in a static context per T type.
     public abstract CallbackList<CameraFeature> features { get; }
 }
 

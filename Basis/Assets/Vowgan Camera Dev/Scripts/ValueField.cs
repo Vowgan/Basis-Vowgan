@@ -1,13 +1,16 @@
 using System;
 using System.Collections.Generic;
 
-public class ValueChangedField<T>
+/// <summary>
+/// A value store with an onChanged invocable callback.
+/// </summary>
+public class ValueField<T>
 {
 
     public T value { get; private set; }
-    public event Action<T> onValueChanged;
+    public event Action<T> onChanged;
 
-    public ValueChangedField(T initialValue)
+    public ValueField(T initialValue)
     {
         value = initialValue;
     }
@@ -21,7 +24,7 @@ public class ValueChangedField<T>
         if (EqualityComparer<T>.Default.Equals(value, newValue)) return false;
 
         value = newValue;
-        onValueChanged?.Invoke(value);
+        onChanged?.Invoke(value);
         return true;
     }
 
