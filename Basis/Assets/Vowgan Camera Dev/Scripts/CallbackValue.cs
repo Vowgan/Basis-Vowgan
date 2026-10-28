@@ -4,16 +4,19 @@ using System.Collections.Generic;
 /// <summary>
 /// A value store with an onChanged invocable callback.
 /// </summary>
-public class ValueField<T>
+public class CallbackValue<T>
 {
 
     public T value { get; private set; }
     public event Action<T> onChanged;
 
-    public ValueField(T initialValue)
+
+    public CallbackValue(T initialValue)
     {
         value = initialValue;
+        onChanged = null;
     }
+
 
     /// <summary>
     /// Set the value and run onValueChanged callbacks.
@@ -27,5 +30,8 @@ public class ValueField<T>
         onChanged?.Invoke(value);
         return true;
     }
+
+    public override string ToString() => value.ToString();
+    public bool IsNull() => value == null;
 
 }

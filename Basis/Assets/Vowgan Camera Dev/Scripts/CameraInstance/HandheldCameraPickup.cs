@@ -7,10 +7,10 @@
 public class HandheldCameraPickup : MonoBehaviour
 {
 
-    [SerializeField] private HandheldCameraUI _ui;
     [SerializeField] private Camera _camera;
-    [SerializeField] private CameraRender _previewRender = new();
     [SerializeField] private Material _rtMaterial;
+    [SerializeField] private CameraRender _previewRender = new();
+    [SerializeField] private HandheldCameraUI _ui;
 
     private static readonly int _baseMap = Shader.PropertyToID("_BaseMap");
 
@@ -22,6 +22,14 @@ public class HandheldCameraPickup : MonoBehaviour
         _rtMaterial.SetTexture(_baseMap, _previewRender.rt);
 
         _previewRender.StartRender(_camera, this);
+
+        HandheldCameraData.cameraState.onChanged += OnCameraStateChanged;
+    }
+
+    private void OnCameraStateChanged(HandheldCameraDataState state)
+    {
+        _camera.transform.localEulerAngles = state.cameraEuler;
+        _previewRender.mirrored = state.mirrored;
     }
 
     private void OnDisable()

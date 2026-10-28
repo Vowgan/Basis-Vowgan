@@ -16,6 +16,7 @@ public class CameraRender : IDisposable
     [field: SerializeField] public int height { get; private set; } = 1080;
     [field: SerializeField] public RenderTextureFormat format { get; private set; } = RenderTextureFormat.ARGB32;
     [field: SerializeField] public int depth { get; private set; } = 24;
+    [SerializeField] public bool mirrored = false;
 
     /// <summary>
     /// Number of frames rendered per-second.
@@ -96,6 +97,10 @@ public class CameraRender : IDisposable
     public void RenderOnce(Camera camera)
     {
         RenderPipeline.SubmitRenderRequest(camera, _renderRequest);
+
+        //TODO:
+        // Add mirroring effect.
+        // The render request is synchronous (i think) so it's safe to apply changes immediately now.
     }
 
     /// <summary>
@@ -105,8 +110,6 @@ public class CameraRender : IDisposable
     {
         isRendering = false;
     }
-
-
 
 
 

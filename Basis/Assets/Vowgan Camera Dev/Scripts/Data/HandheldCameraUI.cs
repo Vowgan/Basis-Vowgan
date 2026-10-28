@@ -24,7 +24,7 @@ public class HandheldCameraUI : IDisposable
     public FocusableButton hudFeatureButton;
 
     private Dictionary<CameraMode, FocusableButton> _modeOptionButtons = new();
-    private Dictionary<CameraMode, FocusableButton> _modeFeatureButtons = new();
+    private Dictionary<CameraFeature, FocusableButton> _modeFeatureButtons = new();
 
 
     public void Init()
@@ -36,6 +36,7 @@ public class HandheldCameraUI : IDisposable
 
         HandheldCameraData.modes.onIndexAdded += OnModeAdded;
         HandheldCameraData.modes.onIndexRemoved += OnModeRemoved;
+        HandheldCameraData.currentMode.onChanged += OnModeChanged;
 
         for (int i = 0; i < HandheldCameraData.modes.Count; i++)
         {
@@ -47,6 +48,7 @@ public class HandheldCameraUI : IDisposable
     {
         HandheldCameraData.modes.onIndexAdded -= OnModeAdded;
         HandheldCameraData.modes.onIndexRemoved -= OnModeRemoved;
+        HandheldCameraData.currentMode.onChanged -= OnModeChanged;
 
         foreach (KeyValuePair<CameraMode, FocusableButton> modeButton in _modeOptionButtons)
         {
@@ -65,7 +67,7 @@ public class HandheldCameraUI : IDisposable
 
         button = UnityEngine.Object.Instantiate(modeOptionButton, modeOptionContainer);
         button.SetLabel(mode.name);
-        button.onClick.AddListener(() => OnModeSelected(mode));
+        button.onClick.AddListener(() => HandheldCameraData.SetCurrentMode(mode));
 
         _modeOptionButtons[mode] = button;
     }
@@ -79,7 +81,7 @@ public class HandheldCameraUI : IDisposable
         }
     }
 
-    private void OnModeSelected(CameraMode mode)
+    private void OnModeChanged(CameraMode mode)
     {
         foreach (FocusableButton button in _modeFeatureButtons.Values)
         {
@@ -92,8 +94,9 @@ public class HandheldCameraUI : IDisposable
         {
             FocusableButton button = UnityEngine.Object.Instantiate(modeFeatureButton, modeFeatureContainer);
             button.SetLabel(feature.name);
+            button.onClick.AddListener(feature.Use);
 
-            _modeFeatureButtons[mode] = button;
+            _modeFeatureButtons[feature] = button;
         }
 
     }

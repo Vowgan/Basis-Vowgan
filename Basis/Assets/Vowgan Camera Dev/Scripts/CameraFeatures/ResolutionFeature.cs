@@ -21,13 +21,16 @@ public sealed class ResolutionFeature : CameraFeature<ImageResolution>
 
     public override string name => "Resolution";
     public override int order => 0;
-    public override ValueField<ImageResolution> valueField { get; } = new(ImageResolution.x720);
+    public override int priority => 0;
+    public override CallbackValue<ImageResolution> state { get; } = new(ImageResolution.x720);
 
-    public override void SetValue(ImageResolution newValue)
+    public override void OnUse()
     {
-        if (valueField.SetValue(newValue))
-        {
-            Debug.Log($"{name} value updated to {newValue}");
-        }
+        Debug.Log("TODO: Add resolution changes here.");
+    }
+
+    public override void Evaluate(ref HandheldCameraDataState state)
+    {
+
     }
 }

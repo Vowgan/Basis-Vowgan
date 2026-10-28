@@ -1,7 +1,7 @@
 using JetBrains.Annotations;
 using UnityEngine;
 
-public class SelfieFeature : CameraFeature<bool>
+public sealed class SelfieFeature : CameraFeature<bool>
 {
 
     [UsedImplicitly]
@@ -11,14 +11,19 @@ public class SelfieFeature : CameraFeature<bool>
 
     public override string name => "Selfie";
     public override int order => 1;
-    public override ValueField<bool> valueField { get; } = new(false);
+    public override int priority => 0;
+    public override CallbackValue<bool> state { get; } = new(false);
 
 
-    public override void SetValue(bool value)
+    public override void OnUse()
     {
-        if (valueField.SetValue(value))
-        {
-            Debug.Log($"{name} value updated to {value}");
-        }
+        state.SetValue(!state.value);
+        Debug.Log($"{name} value updated to {state}");
+    }
+
+    public override void Evaluate(ref HandheldCameraDataState dataState)
+    {
+        if (state.value) dataState.cameraYaw += 180;
+        dataState.mirrored = state.value;
     }
 }
