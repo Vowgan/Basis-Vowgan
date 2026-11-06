@@ -34,4 +34,6 @@ public class CallbackValue<T>
     public override string ToString() => value.ToString();
     public bool IsNull() => value == null;
 
+    public static implicit operator T(CallbackValue<T> callbackValue) => callbackValue.value;
+
 }

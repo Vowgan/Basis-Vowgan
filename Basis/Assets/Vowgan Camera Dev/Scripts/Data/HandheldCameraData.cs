@@ -10,23 +10,26 @@ using Unity.Scripting.LifecycleManagement;
 /// private static void AddToCamera() => HandheldCameraData.AddMode(new PhotoMode());
 /// </example>
 /// </summary>
+[AutoStaticsCleanup]
 public static partial class HandheldCameraData
 {
 
     #region Modes
 
-    [AutoStaticsCleanup] public static CallbackList<CameraMode> modes = new();
-    [AutoStaticsCleanup] private static IOrderedEnumerable<CameraFeature> _priorityModes;
+    public static CallbackList<CameraMode> modes = new();
+    private static IOrderedEnumerable<CameraFeature> _priorityModes;
     /// <summary>
     /// Do not use SetValue for changing the CurrentMode.
     /// You should use SetCurrentMode on this class instead.
     /// </summary>
-    [AutoStaticsCleanup] public static CallbackValue<CameraMode> currentMode { get; } = new(null);
-    [AutoStaticsCleanup] public static CallbackValue<HandheldCameraDataState> cameraState { get; } = new(new());
+    public static CallbackValue<CameraMode> currentMode { get; private set; } = new(null);
+    public static CallbackValue<HandheldCameraDataState> cameraState { get; private set; } = new(new());
 
 
     public static void SetCurrentMode(CameraMode mode)
     {
+        if (currentMode.value == mode) return;
+
         if (!currentMode.IsNull())
         {
             foreach (CameraFeature feature in currentMode.value.features)
@@ -44,6 +47,8 @@ public static partial class HandheldCameraData
                 feature.onUsed += EvaluateState;
             }
         }
+
+        EvaluateState();
     }
 
     public static void AddMode(CameraMode mode)

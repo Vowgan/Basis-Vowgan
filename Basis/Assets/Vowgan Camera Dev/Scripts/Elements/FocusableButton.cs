@@ -1,4 +1,5 @@
-﻿using UnityEngine;
+﻿using System;
+using UnityEngine;
 using UnityEngine.UI;
 
 namespace Vowgan.HandheldCameraSystem
@@ -21,6 +22,8 @@ namespace Vowgan.HandheldCameraSystem
         [SerializeField] protected Color _focusedBackgroundColor = Color.gray9;
 
 
+
+
         protected override void OnValidate()
         {
             base.OnValidate();
@@ -31,6 +34,13 @@ namespace Vowgan.HandheldCameraSystem
                 SetFocused(_focused);
             });
         }
+
+
+        private void OnDestroy()
+        {
+            if (_boundState != null) _boundState.onChanged -= OnBoundStateChanged;
+        }
+
 
         public void SetFocused(bool value)
         {
@@ -61,6 +71,31 @@ namespace Vowgan.HandheldCameraSystem
 
             RectTransform rt = (RectTransform)transform;
             if (rt) rt.sizeDelta = _focused ? _focusedSize : _unfocusedSize;
+        }
+
+
+        private SpriteSet _sprites;
+        private CallbackValue<FocusableButtonState> _boundState;
+
+        public void BindState(CallbackValue<FocusableButtonState> state, SpriteSet sprites)
+        {
+            _sprites = sprites;
+
+            if (_boundState != null) _boundState.onChanged -= OnBoundStateChanged;
+            _boundState = state;
+            if (_boundState == null) return;
+            _boundState.onChanged += OnBoundStateChanged;
+
+            OnBoundStateChanged(_boundState);
+        }
+
+        private void OnBoundStateChanged(FocusableButtonState state)
+        {
+            SetLabel(state.label);
+            SetFocused(state.isFocused);
+            Sprite icon = null;
+            if (_sprites) _sprites.TryGetSprite(state.spriteName, out icon);
+            SetIcon(icon);
         }
     }
 }

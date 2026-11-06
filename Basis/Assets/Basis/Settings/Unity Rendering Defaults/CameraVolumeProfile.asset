@@ -272,6 +272,7 @@ MonoBehaviour:
   - {fileID: -6290886246738873344}
   - {fileID: -5447088460976690848}
   - {fileID: -6620855548041248108}
+  - {fileID: 3758728060092054873}
 --- !u!114 &764296954430757058
 MonoBehaviour:
   m_ObjectHideFlags: 3
@@ -284,7 +285,7 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: c01700fd266d6914ababb731e09af2eb, type: 3}
   m_Name: DepthOfField
   m_EditorClassIdentifier: 
-  active: 0
+  active: 1
   mode:
     m_OverrideState: 1
     m_Value: 2
@@ -391,6 +392,25 @@ MonoBehaviour:
   renderPassEvent:
     m_OverrideState: 0
     m_Value: 550
+--- !u!114 &3758728060092054873
+MonoBehaviour:
+  m_ObjectHideFlags: 3
+  m_CorrespondingSourceObject: {fileID: 0}
+  m_PrefabInstance: {fileID: 0}
+  m_PrefabAsset: {fileID: 0}
+  m_GameObject: {fileID: 0}
+  m_Enabled: 1
+  m_EditorHideFlags: 0
+  m_Script: {fileID: 11500000, guid: f276daaa6a4bdbd48a00b0d6aad77bce, type: 3}
+  m_Name: ExposureVolume
+  m_EditorClassIdentifier: Unity.RenderPipelines.Universal.Runtime::UnityEngine.Rendering.Universal.ExposureVolume
+  active: 1
+  mode:
+    m_OverrideState: 0
+    m_Value: 0
+  fixedExposure:
+    m_OverrideState: 0
+    m_Value: 0
 --- !u!114 &8099220818982314408
 MonoBehaviour:
   m_ObjectHideFlags: 3

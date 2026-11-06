@@ -8608,9 +8608,11 @@ MonoBehaviour:
     <height>k__BackingField: 1080
     <format>k__BackingField: 0
     <depth>k__BackingField: 24
+    isMirrored: 0
     <framerate>k__BackingField: 30
     <msaaSamples>k__BackingField: 1
   _ui:
+    spriteSet: {fileID: 11400000, guid: cdd90e3a22c44e943affc3ee80babec8, type: 2}
     primaryButton: {fileID: 1837747452}
     onScreenLog: {fileID: 1739622310}
     modeOptionContainer: {fileID: 1147825654}
@@ -13186,6 +13188,10 @@ PrefabInstance:
     - target: {fileID: 3150744783190499651, guid: 72b5ccdcd3c40d447bd4e99a04c54019, type: 3}
       propertyPath: m_text
       value: Label here
+      objectReference: {fileID: 0}
+    - target: {fileID: 3150744783190499651, guid: 72b5ccdcd3c40d447bd4e99a04c54019, type: 3}
+      propertyPath: m_margin.w
+      value: 0.0006351471
       objectReference: {fileID: 0}
     - target: {fileID: 3150744783190499651, guid: 72b5ccdcd3c40d447bd4e99a04c54019, type: 3}
       propertyPath: m_fontColor.b

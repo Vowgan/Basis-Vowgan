@@ -26,15 +26,16 @@ public class HandheldCameraPickup : MonoBehaviour
         HandheldCameraData.cameraState.onChanged += OnCameraStateChanged;
     }
 
-    private void OnCameraStateChanged(HandheldCameraDataState state)
-    {
-        _camera.transform.localEulerAngles = state.cameraEuler;
-        _previewRender.mirrored = state.mirrored;
-    }
-
     private void OnDisable()
     {
         _ui.Dispose();
         _previewRender.Dispose();
+        HandheldCameraData.cameraState.onChanged -= OnCameraStateChanged;
+    }
+
+    private void OnCameraStateChanged(HandheldCameraDataState state)
+    {
+        _camera.transform.localEulerAngles = state.cameraEuler;
+        _previewRender.isMirrored = state.mirrored;
     }
 }

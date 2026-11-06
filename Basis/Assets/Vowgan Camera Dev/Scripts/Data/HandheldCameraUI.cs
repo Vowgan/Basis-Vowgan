@@ -12,6 +12,9 @@ using Vowgan.HandheldCameraSystem;
 public class HandheldCameraUI : IDisposable
 {
 
+    public SpriteSet spriteSet;
+
+    [Header("Components")]
     public TimerButton primaryButton;
     public TMP_Text onScreenLog;
     public RectTransform modeOptionContainer;
@@ -67,6 +70,8 @@ public class HandheldCameraUI : IDisposable
 
         button = UnityEngine.Object.Instantiate(modeOptionButton, modeOptionContainer);
         button.SetLabel(mode.name);
+        spriteSet.TryGetSprite(mode.spriteName, out Sprite sprite);
+        button.SetIcon(sprite);
         button.onClick.AddListener(() => HandheldCameraData.SetCurrentMode(mode));
 
         _modeOptionButtons[mode] = button;
@@ -93,11 +98,15 @@ public class HandheldCameraUI : IDisposable
         foreach (CameraFeature feature in mode.features)
         {
             FocusableButton button = UnityEngine.Object.Instantiate(modeFeatureButton, modeFeatureContainer);
-            button.SetLabel(feature.name);
+            button.BindState(feature.featureState, spriteSet);
+            
             button.onClick.AddListener(feature.Use);
-
             _modeFeatureButtons[feature] = button;
         }
+    }
+
+    private void OnButtonStateChanged(FocusableButtonState state, FocusableButton button)
+    {
 
     }
 }

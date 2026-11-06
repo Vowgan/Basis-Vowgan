@@ -10,4 +10,5 @@ public sealed class PhotoMode : CameraMode<PhotoMode>
 
     public override string name => "Photo";
     public override int order => 0;
+    public override string spriteName => "Mode/Photo";
 }

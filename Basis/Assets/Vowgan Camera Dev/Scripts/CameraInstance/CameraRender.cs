@@ -16,7 +16,7 @@ public class CameraRender : IDisposable
     [field: SerializeField] public int height { get; private set; } = 1080;
     [field: SerializeField] public RenderTextureFormat format { get; private set; } = RenderTextureFormat.ARGB32;
     [field: SerializeField] public int depth { get; private set; } = 24;
-    [SerializeField] public bool mirrored = false;
+    [SerializeField] public bool isMirrored = false;
 
     /// <summary>
     /// Number of frames rendered per-second.
@@ -96,11 +96,18 @@ public class CameraRender : IDisposable
     /// </summary>
     public void RenderOnce(Camera camera)
     {
+        Matrix4x4 matrix = camera.projectionMatrix;
+        if (isMirrored)
+        {
+            camera.ResetProjectionMatrix();
+            camera.projectionMatrix = matrix * Matrix4x4.Scale(new(-1, 1, 1));
+            GL.invertCulling = true;
+        }
+
         RenderPipeline.SubmitRenderRequest(camera, _renderRequest);
 
-        //TODO:
-        // Add mirroring effect.
-        // The render request is synchronous (i think) so it's safe to apply changes immediately now.
+        GL.invertCulling = false;
+        camera.ResetProjectionMatrix();
     }
 
     /// <summary>

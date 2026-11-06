@@ -19,8 +19,10 @@ public abstract class CameraFeature : ISortable
     public abstract void OnUse();
     public event Action onUsed;
 
-    public abstract void Evaluate(ref HandheldCameraDataState state);
+    public abstract void Evaluate(ref HandheldCameraDataState dataState);
 
+
+    public abstract CallbackValue<FocusableButtonState> featureState { get; }
 }
 
 public abstract class CameraFeature<TValue> : CameraFeature

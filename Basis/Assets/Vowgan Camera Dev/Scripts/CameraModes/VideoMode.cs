@@ -9,4 +9,5 @@ public sealed class VideoMode : CameraMode<VideoMode>
 
     public override string name => "Video";
     public override int order => 0;
+    public override string spriteName => "Mode/Video";
 }
