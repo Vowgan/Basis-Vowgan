@@ -7788,16 +7788,15 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 44d6bc5df35f42ef8cf03745f00d4392, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HandheldCameraPickup
-  _camera: {fileID: 1745998830}
-  _rtMaterial: {fileID: 2100000, guid: ebd1856110973ae44a2be820725f7fcd, type: 2}
-  _previewRender:
-    <width>k__BackingField: 1920
-    <height>k__BackingField: 1080
+  <previewRender>k__BackingField:
+    captureFormat: EXR
     <format>k__BackingField: 0
-    <depth>k__BackingField: 24
     isMirrored: 0
-    <framerate>k__BackingField: 30
     <msaaSamples>k__BackingField: 1
+    <lastPhotoPath>k__BackingField: 
+    <lastPhotoFailure>k__BackingField: 
+  <camera>k__BackingField: {fileID: 1745998830}
+  _rtMaterial: {fileID: 2100000, guid: ebd1856110973ae44a2be820725f7fcd, type: 2}
   _ui:
     spriteSet: {fileID: 11400000, guid: cdd90e3a22c44e943affc3ee80babec8, type: 2}
     primaryButton: {fileID: 1837747452}

@@ -16,7 +16,13 @@ namespace Vowgan.HandheldCameraSystem
 
         public override void PrimaryAction()
         {
-            Debug.Log("Taking photo");
+            Debug.Log("Taking photo. A contextpickup must be provided.");
+        }
+
+        public override void PrimaryAction(HandheldCameraPickup contextItem)
+        {
+            Debug.Log("Taking photo.");
+            contextItem.previewRender.SavePhoto(contextItem.camera, contextItem.transform);
         }
     }
 }

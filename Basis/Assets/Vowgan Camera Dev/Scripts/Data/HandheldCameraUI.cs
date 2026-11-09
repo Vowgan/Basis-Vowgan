@@ -30,10 +30,13 @@ namespace Vowgan.HandheldCameraSystem
         private Dictionary<CameraMode, FocusableButton> _modeOptionButtons = new();
         private Dictionary<CameraFeature, FocusableButton> _modeFeatureButtons = new();
 
+        private HandheldCameraPickup _cameraContext;
 
-        public void Init()
+        public void Init(HandheldCameraPickup context)
         {
-            primaryButton.onClick.AddListener(() => HandheldCameraData.currentMode.value?.PrimaryAction());
+            _cameraContext = context;
+
+            primaryButton.onClick.AddListener(() => HandheldCameraData.currentMode.value?.PrimaryAction(_cameraContext));
 
             modeOptionContainer.DestroyChildren();
             modeFeatureContainer.DestroyChildren();

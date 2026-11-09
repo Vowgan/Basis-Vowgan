@@ -1,10 +1,16 @@
 ﻿using System;
 using System.Threading.Tasks;
+using Unity.Collections;
+using Unity.GraphToolkit.Editor;
 using UnityEngine;
+using UnityEngine.Experimental.Rendering;
 using UnityEngine.Rendering;
 
 namespace Vowgan.HandheldCameraSystem
 {
+
+    // References BasisHandHeldCameraCapture.cs
+
     [Serializable]
     public class CameraRender : IDisposable
     {
@@ -13,19 +19,64 @@ namespace Vowgan.HandheldCameraSystem
         public bool isRendering { get; private set; }
         public RenderTexture rt { get; private set; }
 
+        [Tooltip("Capture format (EXR/PNG)")]
+        public string captureFormat = "EXR";
 
-        [field: SerializeField] public int width { get; private set; } = 1920;
-        [field: SerializeField] public int height { get; private set; } = 1080;
-        [field: SerializeField] public RenderTextureFormat format { get; private set; } = RenderTextureFormat.ARGB32;
-        [field: SerializeField] public int depth { get; private set; } = 24;
-        [SerializeField] public bool isMirrored = false;
+
+        public int width
+        {
+            get => _width;
+            set
+            {
+                _width = Mathf.Max(value, 1);
+                rt.width = width;
+            }
+        }
+        private int _width = 1920;
+
+        public int height
+        {
+            get => _height;
+            set
+            {
+                _height = Mathf.Max(value, 1);
+                rt.height = height;
+            }
+        }
+        private int _height = 1080;
+
+        public int depth
+        {
+            get => _depth;
+            set
+            {
+                _depth = Mathf.Max(value, 1);
+                rt.depth = depth;
+            }
+        }
+        private int _depth = 24;
+
 
         /// <summary>
         /// Number of frames rendered per-second.
         /// </summary>
-        [field: SerializeField] public float framerate { get; private set; } = 30;
+        public float framerate
+        {
+            get => _framerate;
+            set => _framerate = Mathf.Max(value, 0.001f);
+        }
+        private float _framerate = 30;
+
+
+        [field: SerializeField] public RenderTextureFormat format { get; private set; } = RenderTextureFormat.ARGB32;
+        [SerializeField] public bool isMirrored = false;
 
         [field: SerializeField] public int msaaSamples { get; private set; } = 1;
+
+
+        [field: SerializeField] public string lastPhotoPath { get; private set; }
+        [field: SerializeField] public string lastPhotoFailure { get; private set; }
+
 
         private RenderPipeline.StandardRequest _renderRequest;
 
@@ -74,14 +125,17 @@ namespace Vowgan.HandheldCameraSystem
         {
             camera.targetTexture = rt;
             isRendering = true;
-            _ = RenderCamera(camera, owner);
+            _ = RenderCameraLoop(camera, owner);
         }
 
-        private async Task RenderCamera(Camera camera, MonoBehaviour owner)
+        /// <summary>
+        /// Renders the camera at a set framerate until the owner is destroyed of EndRender is called.
+        /// </summary>
+        private async Task RenderCameraLoop(Camera camera, MonoBehaviour owner)
         {
             while (isRendering)
             {
-                if (!owner)
+                if (!owner || owner.destroyCancellationToken.IsCancellationRequested)
                 {
                     EndRender();
                     break;
@@ -114,7 +168,7 @@ namespace Vowgan.HandheldCameraSystem
         }
 
         /// <summary>
-        /// Cancel the rendering process.
+        /// End the rendering process.
         /// </summary>
         public void EndRender()
         {
@@ -123,29 +177,88 @@ namespace Vowgan.HandheldCameraSystem
 
 
 
-        public void Resize(int newWidth, int newHeight)
+
+
+        public void SavePhoto(Camera camera, Transform ignoreRoot)
         {
-            if (width == newWidth && height == newHeight) return;
-
-            width = newWidth;
-            height = newHeight;
-
-            rt.width = width;
-            rt.height = height;
+            _ = SavePhotoAsFile(camera, ignoreRoot);
         }
 
-        public void SetDepth(int newDepth)
+
+
+
+
+        private async Task SavePhotoAsFile(Camera camera, Transform ignoreRoot)
         {
-            if (depth == newDepth) return;
-            depth = newDepth;
-            rt.depth = depth;
+            RenderOnce(camera);
+
+            BasisHandHeldCameraPhotoMetadata.PhotoMetadata photoMetadata = BasisHandHeldCameraPhotoMetadata.CollectMetadata(camera, ignoreRoot);
+
+            bool exr = captureFormat == "EXR";
+
+            // TODO: Swap this out for a pooled solution.
+            // Formatting based on BasisCameraCaptureFormats.cs
+            Texture2D render = new(rt.width, rt.height, exr ? TextureFormat.RGBAFloat : TextureFormat.RGBA32, false);
+
+            // Copy the texture from the render into an actual RT.
+            RenderTexture previous = RenderTexture.active;
+            RenderTexture.active = rt;
+            render.ReadPixels(new(0, 0, rt.width, rt.height), 0, 0);
+            render.Apply();
+            RenderTexture.active = previous;
+
+
+            NativeArray<byte> rawData = render.GetRawTextureData<byte>();
+            byte[] pixels = new byte[rawData.Length];
+            NativeArray<byte>.Copy(rawData, pixels, rawData.Length);
+
+            GraphicsFormat graphicsFormat = render.graphicsFormat;
+
+            string stamp = BasisCameraPhotoFolder.Timestamp();
+            string path = BasisCameraPhotoFolder.PathFor($"Screenshot_{stamp ?? BasisCameraPhotoFolder.Timestamp()}_{render.width}x{render.height}.{BasisCameraCaptureFormats.Extension(captureFormat)}");
+
+            try
+            {
+                byte[] imageData = await BasisTasks.Run(() =>
+                {
+                    byte[] encoded = exr ?
+                        ImageConversion.EncodeArrayToEXR(pixels, graphicsFormat, (uint)width, (uint)height, 0, Texture2D.EXRFlags.CompressZIP) :
+                        ImageConversion.EncodeArrayToPNG(pixels, graphicsFormat, (uint)width, (uint)height, 0);
+                    if (photoMetadata != null) encoded = BasisHandHeldCameraPhotoMetadata.Embed(encoded, captureFormat, photoMetadata, width, height);
+
+                    return encoded;
+                });
+
+                await BasisFiles.WriteAllBytesAsync(path, imageData);
+            }
+            catch (Exception e)
+            {
+                RecordPhotoFailed(e);
+                return;
+            }
+
+            RecordPhotoSaved(path);
         }
 
-        public void SetFramerate(float newFramerate)
+        /// <summary>
+        /// Stores and logs the reason a photo save failed.
+        /// </summary>
+        private void RecordPhotoFailed(Exception e)
         {
-            if (Mathf.Approximately(framerate, newFramerate)) return;
-            // no divide by zero buts
-            framerate = Mathf.Max(0.001f, newFramerate);
+            lastPhotoFailure = $"{e.GetType().Name}: {e.Message}";
+            BasisDebug.LogError($"Could not save photo: {lastPhotoFailure}", BasisDebug.LogTag.Camera);
         }
+
+        /// <summary>
+        /// Stores the on-device filepath to the most recent saved photo.
+        /// </summary>
+        private void RecordPhotoSaved(string path)
+        {
+            lastPhotoPath = path;
+            lastPhotoFailure = null;
+        }
+
+
+
     }
 }

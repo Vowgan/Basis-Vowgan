@@ -11,11 +11,11 @@ namespace Vowgan.HandheldCameraSystem
     public class HandheldCameraPickup : MonoBehaviour
     {
 
-        [SerializeField] private Camera _camera;
+        [field: SerializeField] public CameraRender previewRender { get; private set; } = new();
+        [field: SerializeField] public Camera camera { get; private set; }
+
         [SerializeField] private Material _rtMaterial;
-        [SerializeField] private CameraRender _previewRender = new();
         [SerializeField] private HandheldCameraUI _ui;
-        [SerializeField] private Vector3 _desktopHeadOffset = new Vector3(0, 0, 0.5f);
 
         private static readonly int _baseMap = Shader.PropertyToID("_BaseMap");
 
@@ -28,17 +28,17 @@ namespace Vowgan.HandheldCameraSystem
             _pickup.OnPickupUse.AddListener(val =>
             {
                 if (val != BasisPickUpUseMode.OnPickUpUseDown) return;
-                HandheldCameraData.currentMode.value?.PrimaryAction();
+                HandheldCameraData.currentMode.value?.PrimaryAction(this);
             });
         }
 
         private void OnEnable()
         {
-            _ui.Init();
-            _previewRender.Create();
-            _rtMaterial.SetTexture(_baseMap, _previewRender.rt);
+            _ui.Init(this);
+            previewRender.Create();
+            _rtMaterial.SetTexture(_baseMap, previewRender.rt);
 
-            _previewRender.StartRender(_camera, this);
+            previewRender.StartRender(camera, this);
 
             HandheldCameraData.cameraState.onChanged += OnCameraStateChanged;
         }
@@ -46,14 +46,14 @@ namespace Vowgan.HandheldCameraSystem
         private void OnDisable()
         {
             _ui.Dispose();
-            _previewRender.Dispose();
+            previewRender.Dispose();
             HandheldCameraData.cameraState.onChanged -= OnCameraStateChanged;
         }
 
         private void OnCameraStateChanged(HandheldCameraDataState state)
         {
-            _camera.transform.localEulerAngles = state.cameraEuler;
-            _previewRender.isMirrored = state.mirrored;
+            camera.transform.localEulerAngles = state.cameraEuler;
+            previewRender.isMirrored = state.mirrored;
         }
     }
 }

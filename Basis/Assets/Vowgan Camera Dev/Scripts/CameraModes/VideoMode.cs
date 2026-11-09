@@ -18,5 +18,10 @@ namespace Vowgan.HandheldCameraSystem
         {
             Debug.Log("Starting video");
         }
+
+        public override void PrimaryAction(HandheldCameraPickup contextItem)
+        {
+            Debug.Log($"Starting video: {contextItem}");
+        }
     }
 }

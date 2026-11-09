@@ -23,6 +23,12 @@ namespace Vowgan.HandheldCameraSystem
         /// For example: Use this to save the current render as a photo.
         /// </summary>
         public abstract void PrimaryAction();
+
+        /// <summary>
+        /// The action taken when the primary action (The center UI button / clicked while grabbed) is performed.
+        /// For example: Use this to save the current render as a photo.
+        /// </summary>
+        public abstract void PrimaryAction(HandheldCameraPickup contextItem);
     }
 
     /// <summary>
