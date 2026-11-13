@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.Network.Core;
 using Basis.Scripts.Networking;
 using Basis.Scripts.Networking.NetworkedAvatar;
@@ -10,7 +11,8 @@ using System.Threading.Tasks;
 using static BasisNetworkCore.Serializable.SerializableBasis;
 using static DarkRift.Basis_Common.Serializable.SerializableBasis;
 using static SerializableBasis;
-public static class BasisNetworkGenericMessages
+[AutoStaticsCleanup]
+public static partial class BasisNetworkGenericMessages
 {
     public class DeferredMessage
     {
@@ -35,7 +37,7 @@ public static class BasisNetworkGenericMessages
     public delegate void OnNetworkMessageReceiveOwnershipTransfer(string UniqueEntityID, ushort NetIdNewOwner, bool IsOwner);
     public delegate void OnNetworkMessageReceiveOwnershipRemoved(string UniqueEntityID);
     // Sending message with different conditions
-    private static readonly ThreadLocal<NetDataWriter> threadLocalWriter = new ThreadLocal<NetDataWriter>(() => new NetDataWriter());
+    [NoAutoStaticsCleanup] private static readonly ThreadLocal<NetDataWriter> threadLocalWriter = new ThreadLocal<NetDataWriter>(() => new NetDataWriter());
     public static void RegisterHandler(ushort messageIndex, Action<ushort, byte[], DeliveryMethod> handler)
     {
         _handlers[messageIndex] = handler;
@@ -207,9 +209,13 @@ public static class BasisNetworkGenericMessages
     }
     public static void HandleOwnershipTransfer(NetPacketReader reader)
     {
-        OwnershipTransferMessage OwnershipTransferMessage = new OwnershipTransferMessage();
-        OwnershipTransferMessage.Deserialize(reader);
-        HandleOwnership(OwnershipTransferMessage);
+        do
+        {
+            OwnershipTransferMessage OwnershipTransferMessage = new OwnershipTransferMessage();
+            OwnershipTransferMessage.Deserialize(reader);
+            HandleOwnership(OwnershipTransferMessage);
+        }
+        while (reader.AvailableBytes > 0);
     }
     public static void HandleOwnershipResponse(NetPacketReader reader)
     {
@@ -475,7 +481,7 @@ public static class BasisNetworkGenericMessages
         }
         catch (OperationCanceledException)
         {
-            BasisDebug.Log($"Load cancelled for {LocalLoadResource.LoadedNetID} (disconnected)", BasisDebug.LogTag.Networking);
+            BasisDebug.Log($"Load cancelled for {LocalLoadResource.LoadedNetID}", BasisDebug.LogTag.Networking);
         }
     }
 
@@ -523,6 +529,10 @@ public static class BasisNetworkGenericMessages
         modifyResource.Deserialize(reader);
         // Apply the server-authoritative static/locked state to the registry record + live object.
         Basis.BasisRuntimeSpawnRegistry.SetStaticByLoadedNetId(modifyResource.LoadedNetID, modifyResource.Static, modifyResource.StaticAdminLocked);
+        if (modifyResource.Op == ModifyResource.OpDiskState)
+        {
+            Basis.BasisRuntimeSpawnRegistry.SetSavedToDiskByLoadedNetId(modifyResource.LoadedNetID, modifyResource.SavedToDisk);
+        }
         return Task.CompletedTask;
     }
 }

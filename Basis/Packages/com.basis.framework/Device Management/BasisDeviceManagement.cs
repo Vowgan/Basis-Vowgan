@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.BasisUI;
 using Basis.Scripts.Avatar;
 using Basis.Scripts.BasisSdk.Helpers;
@@ -34,8 +35,9 @@ namespace Basis.Scripts.Device_Management
     /// This MonoBehaviour is intended to exist exactly once in a scene. Use <see cref="Instance"/> for access.
     /// It initializes players, loads settings/bindings, restores previously connected devices, and manages XR lifecycle.
     /// </remarks>
+    [AutoStaticsCleanup]
     [DefaultExecutionOrder(-1000)]
-    public class BasisDeviceManagement : MonoBehaviour
+    public partial class BasisDeviceManagement : MonoBehaviour
     {
         /// <summary>
         /// Guard flag to prevent duplicate event subscriptions.
@@ -247,6 +249,11 @@ namespace Basis.Scripts.Device_Management
             {
                 Instance = this;
             }
+            await Basis.Scripts.Platform.BasisWebAddressables.WhenReady();
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (CameraShutterSound != null) CameraShutterSound.LoadAudioData();
+            _ = Basis.Scripts.Audio.BasisUISounds.Pack;
+#endif
 
             // Detect Wine/Proton once up front so any subsystem can branch on it.
             BasisProtonDetection.Initialize();
@@ -256,16 +263,13 @@ namespace Basis.Scripts.Device_Management
             try
             {
                 BasisSettingsSystem.Initialize();
-                // Localization must initialize before BasisSettingsDefaults so that
-                // auto-detection can see an empty settings dict on first run — any
-                // earlier binding constructor would write "en" as a default and
-                // defeat the HasSaveData("language") check.
-                Basis.BasisUI.BasisLocalization.Initialize();
-                Basis.BasisUI.BasisTMPFontFallbacks.RefreshJapanesePriority();
+
                 using (BasisSettingsSystem.Batch())
                 {
                     BasisSettingsDefaults.LoadAll();
                 }
+                Basis.BasisUI.BasisLocalization.Initialize();
+                Basis.BasisUI.BasisTMPFontFallbacks.RefreshJapanesePriority();
                 // First thing after the settings land: a renderer swap can only happen by
                 // relaunching, so it has to be decided before anything is built to throw away.
                 Basis.Scripts.Rendering.BasisGraphicsApiSelection.ApplyStartupSetting();
@@ -369,21 +373,24 @@ namespace Basis.Scripts.Device_Management
                 await BasisDataStoreAvatarKeys.LoadKeys();
                 await BasisDataStoreItemKeys.LoadKeys();
 
-                AvatarKey[] activeKeys = BasisDataStoreAvatarKeys.DisplayKeys();
-                foreach (AvatarKey Key in activeKeys)
+                if (!BasisDataStoreAvatarKeys.LoadFailed && !BasisDataStoreItemKeys.IsReadOnly)
                 {
-                    ItemKey ItemKey = new ItemKey
+                    AvatarKey[] activeKeys = BasisDataStoreAvatarKeys.DisplayKeys();
+                    foreach (AvatarKey Key in activeKeys)
                     {
-                        Url = Key.Url,
-                        Pass = Key.Pass,
-                        Mode = BundledContentHolder.Mode.Avatar,
-                        EmbeddedSettings = EmbeddedSettings.Default
-                    };
+                        ItemKey ItemKey = new ItemKey
+                        {
+                            Url = Key.Url,
+                            Pass = Key.Pass,
+                            Mode = BundledContentHolder.Mode.Avatar,
+                            EmbeddedSettings = EmbeddedSettings.Default
+                        };
 
-                    await BasisDataStoreItemKeys.AddNewKey(ItemKey);
+                        await BasisDataStoreItemKeys.AddNewKey(ItemKey);
+                    }
+
+                    File.Delete(BasisDataStoreAvatarKeys.FilePath);
                 }
-
-                File.Delete(BasisDataStoreAvatarKeys.FilePath);
             }
 
             await BasisPlayerFactory.CreateLocalPlayer(new InstantiationParameters(transform, true));
@@ -481,6 +488,7 @@ namespace Basis.Scripts.Device_Management
             {
                 BasisDebug.Log($"Shutting down mode: {StaticCurrentMode}", BasisDebug.LogTag.Device);
                 StopAllDevices();
+                BasisCursorManagement.OnReset();
             }
             else
             {
@@ -715,6 +723,8 @@ namespace Basis.Scripts.Device_Management
                         input.CalibratedUnscaledRotation = prev.CalibratedUnscaledRotation;
                         input.CalibratedUnscaledHeadPosition = prev.CalibratedUnscaledHeadPosition;
                         input.CalibratedUnscaledHeadRotation = prev.CalibratedUnscaledHeadRotation;
+                        input.HasCalibratedHeadFromEye = prev.HasCalibratedHeadFromEye;
+                        input.CalibratedUnscaledHeadFromEye = prev.CalibratedUnscaledHeadFromEye;
                         BasisAvatarIKStageCalibration.ReprojectTrackerOffsetsForCurrentAvatar();
                     }
                     else
@@ -782,7 +792,9 @@ namespace Basis.Scripts.Device_Management
                     CalibratedUnscaledPosition = device.CalibratedUnscaledPosition,
                     CalibratedUnscaledRotation = device.CalibratedUnscaledRotation,
                     CalibratedUnscaledHeadPosition = device.CalibratedUnscaledHeadPosition,
-                    CalibratedUnscaledHeadRotation = device.CalibratedUnscaledHeadRotation
+                    CalibratedUnscaledHeadRotation = device.CalibratedUnscaledHeadRotation,
+                    HasCalibratedHeadFromEye = device.HasCalibratedHeadFromEye,
+                    CalibratedUnscaledHeadFromEye = device.CalibratedUnscaledHeadFromEye
                 });
             }
         }
@@ -872,7 +884,7 @@ namespace Basis.Scripts.Device_Management
             var inst = Instance;
             if (inst == null)
             {
-                BasisDebug.LogError("Missing Device Manager", BasisDebug.LogTag.Device);
+             //   BasisDebug.LogError("Missing Device Manager", BasisDebug.LogTag.Device);
                 return;
             }
 
@@ -1037,6 +1049,10 @@ namespace Basis.Scripts.Device_Management
 #if UNITY_SERVER
             return BasisConstants.Headless;
 #else
+            if (Application.platform == RuntimePlatform.WebGLPlayer)
+            {
+                return BasisConstants.Desktop;
+            }
             if (Application.isMobilePlatform) // try to boot vr first on standalone devices.
             {
                 // iOS devices (iPhones/iPads) should use Desktop mode for touch controls

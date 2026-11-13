@@ -8,6 +8,7 @@ namespace Basis.Config
         public static string Password = "default_password";
         public static string Ip = "localhost";
         public static int Port = 4296;
+        public static string NetworkStackId = string.Empty;
         public static string CompanyName = BasisNetworkApplication.DefaultCompanyName;
         public static string ProductName = BasisNetworkApplication.DefaultProductName;
         public static int ClientCount = 250;
@@ -35,6 +36,7 @@ namespace Basis.Config
         // and send interval by pair distance, so spawning everyone on one spot measures a worst case
         // no real instance hits. 0 keeps the legacy sub-metre cluster.
         public static float SpawnRadiusMeters = 40f;
+        public static bool Wander = true;
 
         // Voice is a large share of what a real instance costs the server, and a silent crowd hides
         // it completely. Basis culls voice client-side, so each simulated client advertises the peers
@@ -182,6 +184,8 @@ namespace Basis.Config
                                 new XElement("Ip", Ip),
                                 new XComment(" Server UDP port; must match the server's <SetPort>. int, range 1-65535. "),
                                 new XElement("Port", Port),
+                                new XComment(" Network stack the fake clients connect with: litenetlib, websocket or steam, as the server lists them in <NetworkStackId>. Empty uses litenetlib. string. "),
+                                new XElement("NetworkStackId", NetworkStackId),
                                 new XComment(" Company name each fake client reports; must match the server's <CompanyName>. string. "),
                                 new XElement("CompanyName", CompanyName),
                                 new XComment(" Product name each fake client reports; must match the server's <ProductName>. string. "),
@@ -285,6 +289,7 @@ namespace Basis.Config
                     Password = ReadString(root, "Password", Password);
                     Ip = ReadString(root, "Ip", Ip);
                     Port = ReadInt(root, "Port", Port);
+                    NetworkStackId = ReadString(root, "NetworkStackId", NetworkStackId);
                     CompanyName = ReadString(root, "CompanyName", CompanyName);
                     ProductName = ReadString(root, "ProductName", ProductName);
                     ClientCount = ReadInt(root, "ClientCount", ClientCount);
@@ -298,6 +303,7 @@ namespace Basis.Config
                     SimulateRealisticPlatforms = ReadBool(root, "SimulateRealisticPlatforms", SimulateRealisticPlatforms);
                     SimulateBodyFit = ReadBool(root, "SimulateBodyFit", SimulateBodyFit);
                     SpawnRadiusMeters = ReadFloat(root, "SpawnRadiusMeters", SpawnRadiusMeters);
+                    Wander = ReadBool(root, "Wander", Wander);
                     SimulateVoice = ReadBool(root, "SimulateVoice", SimulateVoice);
                     VoiceRangeMeters = ReadFloat(root, "VoiceRangeMeters", VoiceRangeMeters);
                     VoiceParticipantPercent = ReadInt(root, "VoiceParticipantPercent", VoiceParticipantPercent);

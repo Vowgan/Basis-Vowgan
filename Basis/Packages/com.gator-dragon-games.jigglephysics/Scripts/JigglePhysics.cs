@@ -37,7 +37,6 @@ public static class JigglePhysics {
     private static JiggleJobs jobs;
     private static bool hasRunThisFrame;
     
-    private static double accumulator;
     private static double lastFixedCurrentTime = 0f;
 
     private const int MaxCullingCameras = 16;
@@ -179,7 +178,6 @@ public static class JigglePhysics {
     private static void Initialize() {
         JiggleSettings.ResetBootLatch();
         lastFixedCurrentTime = 0f;
-        accumulator = 0;
         parametersCache = new();
         rootJiggleTreeSegments = new List<JiggleTreeSegment>();
         jiggleRootLookup = new Dictionary<Transform, JiggleTreeSegment>();
@@ -346,6 +344,15 @@ public static class JigglePhysics {
     /// </summary>
     public static void RemoveJiggleColliders(List<JiggleColliderSerializable> colliders) {
         jobs?.ScheduleRemoveBatch(colliders);
+    }
+
+    /// <summary>
+    /// Enables or disables colliders that are already registered, without unregistering them. A
+    /// disabled collider keeps its slot, so turning it back on costs no transform access array
+    /// write. Colliders that are not registered are ignored.
+    /// </summary>
+    public static void SetJiggleCollidersEnabled(List<JiggleColliderSerializable> colliders, bool enabled) {
+        jobs?.ScheduleSetCollidersEnabled(colliders, enabled);
     }
 
     public static unsafe void FreeOnComplete(IntPtr pointer) {

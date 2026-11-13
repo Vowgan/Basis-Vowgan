@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.Scripts.BasisSdk;
 using Basis.Scripts.BasisSdk.Players;
 using Basis.Scripts.Device_Management;
@@ -13,7 +14,8 @@ using UnityEngine.SceneManagement;
 
 namespace Basis
 {
-    public static class BasisRuntimeSpawnRegistry
+    [AutoStaticsCleanup]
+    public static partial class BasisRuntimeSpawnRegistry
     {
         public enum RegistryChangeType : byte
         {
@@ -73,6 +75,10 @@ namespace Basis
 
         // LoadedNetID -> instance (fast removal / lookup)
         private static readonly Dictionary<string, SpawnInstance> _byNetId = new();
+
+        // LoadedNetIDs the server has saved to its disk (returns after a server restart). Kept apart
+        // from SpawnInstance because a late joiner can hear the state before its spawn finishes.
+        private static readonly HashSet<string> _savedToDisk = new();
 
         public static bool HasAny(string url)
             => !string.IsNullOrWhiteSpace(url)
@@ -241,6 +247,8 @@ namespace Basis
         {
             if (string.IsNullOrWhiteSpace(loadedNetId)) return false;
 
+            CancelPendingLoadsByNetId(loadedNetId);
+
             // Clients that never got this spawn loaded hold a failure row for it instead of a real
             // instance; the unload broadcast is what tells them it is gone, so clear that first.
             DismissFailedLoadByNetId(loadedNetId);
@@ -299,6 +307,7 @@ namespace Basis
         private static bool RemoveByLoadedNetId_RegistryOnly(string loadedNetId)
         {
             if (string.IsNullOrWhiteSpace(loadedNetId)) return false;
+            _savedToDisk.Remove(loadedNetId);
             if (!_byNetId.TryGetValue(loadedNetId, out var instance) || instance == null) return false;
 
             // Remove from URL grouping list
@@ -372,6 +381,19 @@ namespace Basis
             }
         }
 
+        public static bool IsSavedToDisk(string loadedNetId) => !string.IsNullOrWhiteSpace(loadedNetId) && _savedToDisk.Contains(loadedNetId);
+
+        /// <summary>Applies the server's saved-to-disk state for a network spawn. Main-thread only.</summary>
+        public static void SetSavedToDiskByLoadedNetId(string loadedNetId, bool saved)
+        {
+            if (string.IsNullOrWhiteSpace(loadedNetId)) return;
+            bool changed = saved ? _savedToDisk.Add(loadedNetId) : _savedToDisk.Remove(loadedNetId);
+            if (changed && _byNetId.TryGetValue(loadedNetId, out SpawnInstance instance) && instance != null)
+            {
+                RaiseChanged(RegistryChangeType.Modified, instance);
+            }
+        }
+
         /// <summary>
         /// Clears all instances for a specific URL (registry + runtime refs).
         /// Does NOT unload/destroy anything by itself; it only forgets references.
@@ -411,6 +433,7 @@ namespace Basis
         {
             _map.Clear();
             _byNetId.Clear();
+            _savedToDisk.Clear();
 
             SpawnedGameobjects.Clear();
             SpawnedScenes.Clear();
@@ -562,7 +585,7 @@ namespace Basis
             public DateTime StartedUtc;
             public float Progress;
             public string Stage;
-            [NonSerialized] public CancellationTokenSource Cts; // set for cancellable (local/embedded) loads; null for network — those are cancelled via a server unload request instead
+            [NonSerialized] public CancellationTokenSource Cts;
         }
 
         public static event Action OnPendingLoadsChanged;
@@ -570,7 +593,7 @@ namespace Basis
 
         private static readonly Dictionary<string, PendingLoad> _pendingLoads = new();
         private static readonly ConcurrentQueue<(string PendingId, float Progress, string Stage)> _pendingProgressQueue = new();
-        private static readonly Action _drainPendingProgress = DrainPendingProgress;
+        [NoAutoStaticsCleanup] private static readonly Action _drainPendingProgress = DrainPendingProgress;
 
         public static IReadOnlyCollection<PendingLoad> GetPendingLoads() => _pendingLoads.Values;
 
@@ -606,10 +629,9 @@ namespace Basis
         }
 
         /// <summary>
-        /// Requests cancellation of an in-flight local/embedded load (the row's own load site observes
-        /// its Cts and unwinds via OperationCanceledException, which EndPendingLoad's finally clears —
-        /// the row disappears from that, not from this call). No-op for a network pending load: those
-        /// have no Cts, since only the server can authoritatively cancel a networked spawn.
+        /// Requests cancellation of an in-flight load (the row's own load site observes its Cts and
+        /// unwinds via OperationCanceledException, which EndPendingLoad's finally clears — the row
+        /// disappears from that, not from this call).
         /// </summary>
         public static bool RequestCancelPendingLoad(string pendingId)
         {
@@ -619,6 +641,31 @@ namespace Basis
             }
             pending.Cts.Cancel();
             return true;
+        }
+
+        private static void CancelPendingLoadsByNetId(string loadedNetId)
+        {
+            List<CancellationTokenSource> matches = null;
+            foreach (PendingLoad pending in _pendingLoads.Values)
+            {
+                if (pending != null && pending.Cts != null && pending.LoadedNetID == loadedNetId)
+                {
+                    matches ??= new List<CancellationTokenSource>();
+                    matches.Add(pending.Cts);
+                }
+            }
+            if (matches == null) return;
+
+            for (int Index = 0; Index < matches.Count; Index++)
+            {
+                try
+                {
+                    matches[Index].Cancel();
+                }
+                catch (ObjectDisposedException)
+                {
+                }
+            }
         }
 
         public static void ReportPendingLoadProgress(string pendingId, float progress, string stage)

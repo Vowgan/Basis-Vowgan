@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.IK;
 using Basis.Scripts.Animator_Driver;
 using Basis.Scripts.Audio;
@@ -21,7 +22,8 @@ using static BasisHeightDriver;
 
 namespace Basis.Scripts.BasisSdk.Players
 {
-    public class BasisLocalPlayer : BasisPlayer, IBasisLocalPlayer
+    [AutoStaticsCleanup]
+    public partial class BasisLocalPlayer : BasisPlayer, IBasisLocalPlayer
     {
         public static BasisLocalPlayer Instance { get; private set; }
 
@@ -52,6 +54,13 @@ namespace Basis.Scripts.BasisSdk.Players
         public static BasisOrderedDelegate AfterSimulateOnRender = new BasisOrderedDelegate();
 
         public static BasisOrderedDelegate AfterSimulateOnLate = new BasisOrderedDelegate();
+
+        /// <summary>
+        /// Runs after current-frame device input has been joined, immediately before character
+        /// locomotion consumes it. Gameplay movement modes should use this instead of Update when
+        /// controller edges and tracked poses must affect the same simulation frame.
+        /// </summary>
+        public static BasisOrderedDelegate BeforeCharacterMovement = new BasisOrderedDelegate();
 
         public static Matrix4x4 localToWorldMatrix = Matrix4x4.identity;
         #region Drivers
@@ -106,6 +115,7 @@ namespace Basis.Scripts.BasisSdk.Players
         [Header("Blink Driver")]
         [SerializeField]
         public BasisLocalFacialBlinkDriver FacialBlinkDriver = new BasisLocalFacialBlinkDriver();
+        [System.NonSerialized] public BasisIdleExpressionDriver IdleExpressionDriver = new BasisIdleExpressionDriver();
 
         #endregion
         public async Task LocalInitialize()
@@ -145,11 +155,7 @@ namespace Basis.Scripts.BasisSdk.Players
                 LoadModeLocal,
                 out BasisDataStore.BasisSavedAvatar LastUsedAvatar);
 
-            if (LoadedState)
-            {
-                await LoadInitialAvatar(LastUsedAvatar);
-            }
-            else
+            if (!LoadedState || !WearLoadingAvatar())
             {
                 await LoadFallbackAvatar();
             }
@@ -173,18 +179,38 @@ namespace Basis.Scripts.BasisSdk.Players
             PlayerReady = true;
             OnLocalPlayerInitialized?.Invoke();
             BasisLocalPlayerData.RaiseLocalPlayerInitialized();
+
+            if (LoadedState)
+            {
+                RestoreLastUsedAvatar(LastUsedAvatar);
+            }
         }
 
-        public async Task LoadInitialAvatar(BasisDataStore.BasisSavedAvatar LastUsedAvatar)
+        private async void RestoreLastUsedAvatar(BasisDataStore.BasisSavedAvatar LastUsedAvatar)
+        {
+            try
+            {
+                await LoadInitialAvatar(LastUsedAvatar, LoadFallbackOnFailure: false);
+            }
+            catch (Exception e)
+            {
+                BasisDebug.LogError($"Restoring the last used avatar failed, keeping the loading avatar: {e}", BasisDebug.LogTag.Avatar);
+            }
+        }
+
+        public async Task LoadInitialAvatar(BasisDataStore.BasisSavedAvatar LastUsedAvatar, bool LoadFallbackOnFailure = true)
         {
             if (LastUsedAvatar.loadmode == (byte)BasisLoadMode.ByGameobjectReference)
             {
                 BasisDebug.Log("failed to load last used : in-scene avatars cannot be restored", BasisDebug.LogTag.Avatar);
-                await LoadFallbackAvatar();
+                if (LoadFallbackOnFailure)
+                {
+                    await LoadFallbackAvatar();
+                }
                 return;
             }
 
-            await BasisDataStoreItemKeys.LoadKeys();
+            await BasisDataStoreItemKeys.EnsureLoaded();
             ItemKey matchingKey = null;
             ItemKey[] activeKeys = BasisDataStoreItemKeys.DisplayKeys();
             foreach (ItemKey Key in activeKeys)
@@ -200,7 +226,10 @@ namespace Basis.Scripts.BasisSdk.Players
             if (unlockPassword == null)
             {
                 BasisDebug.Log("failed to load last used : no stored password and no key found", BasisDebug.LogTag.Avatar);
-                await LoadFallbackAvatar();
+                if (LoadFallbackOnFailure)
+                {
+                    await LoadFallbackAvatar();
+                }
                 return;
             }
 
@@ -218,6 +247,22 @@ namespace Basis.Scripts.BasisSdk.Players
             };
             BasisDebug.Log(onDisc ? "loading previously loaded avatar" : "last used avatar missing from disc cache, re-downloading", BasisDebug.LogTag.Avatar);
             await CreateAvatar(LastUsedAvatar.loadmode, bundle);
+        }
+
+        private bool WearLoadingAvatar()
+        {
+            BasisAvatarFactory.RemoveOldAvatarAndLoadFallback(this, this.transform.position, Quaternion.identity);
+            if (BasisAvatar == null)
+            {
+                return false;
+            }
+            CurrentAvatarUniqueID = BasisAvatarFactory.LoadingAvatar.BasisRemoteBundleEncrypted.RemoteBeeFileLocation;
+            AvatarMetaData = BasisAvatarFactory.LoadingAvatar;
+            AvatarLoadMode = LoadModeLocal;
+            AvatarSwitched();
+            OnLocalAvatarChanged?.Invoke();
+            BasisConstraintSystem.SetPriorityRoot(BasisAvatar.transform.root);
+            return true;
         }
 
         public async Task LoadFallbackAvatar()
@@ -308,8 +353,18 @@ namespace Basis.Scripts.BasisSdk.Players
         }
         public async Task CreateAvatar(byte LoadMode, BasisLoadableBundle BasisLoadableBundle)
         {
-            CurrentAvatarUniqueID = BasisLoadableBundle.BasisRemoteBundleEncrypted.RemoteBeeFileLocation;
-            await BasisAvatarFactory.LoadAvatarLocal(this, LoadMode, BasisLoadableBundle, this.transform.position, Quaternion.identity);
+            string previousAvatarUniqueID = CurrentAvatarUniqueID;
+            string requestedAvatarUniqueID = BasisLoadableBundle.BasisRemoteBundleEncrypted.RemoteBeeFileLocation;
+            CurrentAvatarUniqueID = requestedAvatarUniqueID;
+            bool loaded = await BasisAvatarFactory.LoadAvatarLocal(this, LoadMode, BasisLoadableBundle, this.transform.position, Quaternion.identity);
+            if (!string.Equals(CurrentAvatarUniqueID, requestedAvatarUniqueID, StringComparison.Ordinal))
+            {
+                return;
+            }
+            if (!loaded)
+            {
+                CurrentAvatarUniqueID = previousAvatarUniqueID;
+            }
             OnLocalAvatarChanged?.Invoke();
 
             // Tell the constraint solver which hierarchy is ours. It bands how often it re-reads a
@@ -319,6 +374,10 @@ namespace Basis.Scripts.BasisSdk.Players
             // correct, just without the saving.
             BasisConstraintSystem.SetPriorityRoot(
                 BasisAvatar != null ? BasisAvatar.transform.root : null);
+            if (!loaded)
+            {
+                return;
+            }
             if (LoadMode != (byte)BasisLoadMode.ByGameobjectReference)
             {
                 BasisDataStore.SaveAvatar(CurrentAvatarUniqueID, LoadMode, LoadFileNameAndExtension, BasisLoadableBundle.UnlockPassword);
@@ -355,7 +414,7 @@ namespace Basis.Scripts.BasisSdk.Players
             {
 #if !BASIS_DISABLE_MICROPHONE
                 BasisLocalMicrophoneDriver.OnHasAudio += DriveAudioToViseme;
-                BasisLocalMicrophoneDriver.OnHasSilence += DriveAudioToViseme;
+                BasisLocalMicrophoneDriver.OnHasSilence += DriveSilenceToViseme;
 #endif
                 HasCalibrationEvents = true;
             }
@@ -380,7 +439,7 @@ namespace Basis.Scripts.BasisSdk.Players
             {
 #if !BASIS_DISABLE_MICROPHONE
                 BasisLocalMicrophoneDriver.OnHasAudio -= DriveAudioToViseme;
-                BasisLocalMicrophoneDriver.OnHasSilence -= DriveAudioToViseme;
+                BasisLocalMicrophoneDriver.OnHasSilence -= DriveSilenceToViseme;
 #endif
                 HasCalibrationEvents = false;
             }
@@ -397,6 +456,7 @@ namespace Basis.Scripts.BasisSdk.Players
             {
                 FacialBlinkDriver.OnDestroy();
             }
+            IdleExpressionDriver?.Clear();
 
 #if !BASIS_DISABLE_MICROPHONE
             BasisLocalMicrophoneDriver.OnPausedAction -= LocalVisemeDriver.OnPausedEvent;
@@ -415,7 +475,28 @@ namespace Basis.Scripts.BasisSdk.Players
         {
 #if !BASIS_DISABLE_MICROPHONE
             LocalVisemeDriver.VoiceRms = BasisVoiceLevel.LocalVoiceRms;
-            LocalVisemeDriver.ProcessAudioSamples(BasisLocalMicrophoneDriver.processBufferArray,1,BasisLocalMicrophoneDriver.processBufferArray.Length);
+#if UNITY_WEBGL && !UNITY_EDITOR
+            float[] frame = BasisLocalMicrophoneDriver.WebLipSyncAudio(out int count);
+#else
+            float[] frame = BasisLocalMicrophoneDriver.processBufferArray;
+            int count = frame != null ? Math.Min(BasisLocalMicrophoneDriver.ProcessFrameSize, frame.Length) : 0;
+#endif
+            if (frame == null || count <= 0) return;
+            LocalVisemeDriver.ProcessAudioSamples(frame,1,count);
+#endif
+        }
+
+        public void DriveSilenceToViseme()
+        {
+#if !BASIS_DISABLE_MICROPHONE
+            LocalVisemeDriver.VoiceRms = BasisVoiceLevel.LocalVoiceRms;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            int count = BasisLocalMicrophoneDriver.WebLipSyncSilence();
+#else
+            float[] frame = BasisLocalMicrophoneDriver.processBufferArray;
+            int count = frame != null ? Math.Min(BasisLocalMicrophoneDriver.ProcessFrameSize, frame.Length) : 0;
+#endif
+            if (count > 0) LocalVisemeDriver.ProcessSilence(count);
 #endif
         }
 
@@ -424,6 +505,8 @@ namespace Basis.Scripts.BasisSdk.Players
             // Opens this frame's transform snapshot. Nothing cached can survive it, so a missed
             // invalidation is bounded to a single frame.
             BasisLocalPose.BeginFrame();
+
+            BeforeCharacterMovement.Invoke();
 
             // Kick the locomotion pose job first: when active it fills the IK stream on a worker
             // while everything below runs, and is joined inside SimulateIKDestinations.
@@ -526,17 +609,17 @@ namespace Basis.Scripts.BasisSdk.Players
 
             using (BasisLocalPlayerMarkers.AfterSimulateOnLate.Auto())
             {
-                AfterSimulateOnLate?.Invoke();
+                AfterSimulateOnLate.Invoke();
             }
             BasisFiniteWatchdog.Checkpoint("LocalFinish/PostAfterSimulateOnLate");
         }
         public static void FireJustBeforeNetworkApply()
         {
-            JustBeforeNetworkApply?.Invoke();
+            JustBeforeNetworkApply.Invoke();
         }
         public static void FireAfterRemoteSyncInterpolated()
         {
-            AfterRemoteSyncInterpolated?.Invoke();
+            AfterRemoteSyncInterpolated.Invoke();
         }
         public void SimulateOnRender()
         {
@@ -544,7 +627,7 @@ namespace Basis.Scripts.BasisSdk.Players
             BasisFiniteWatchdog.Checkpoint("LocalRender/PostRenderPollData");
 
             // now other things can move like UI and NON-CHILDREN OF BASISLOCALPLAYER.
-            AfterSimulateOnRender?.Invoke();
+            AfterSimulateOnRender.Invoke();
             BasisFiniteWatchdog.Checkpoint("LocalRender/PostAfterSimulateOnRender");
         }
         public void OnLateSimulateBones(BasisPlayer Player)
@@ -581,7 +664,7 @@ namespace Basis.Scripts.BasisSdk.Players
             Quaternion desiredRotWS = Quaternion.LookRotation(flatFwd.normalized, Vector3.up);
 
             // Offset the avatar root by the head's T-pose offset so the head bone lands on headPosWS.
-            Vector3 headTposeLocal = BasisLocalBoneDriver.HeadControl.TposeLocalScaled.position;
+            Vector3 headTposeLocal = BasisLocalBoneDriver.HeadControl.TposeLocalScaled.position + Vector3.up * LocalAvatarDriver.TposeSoleOffsetScaled();
             Vector3 avatarWorldPos = headPosWS - desiredRotWS * headTposeLocal;
 
             AvatarTransform.SetPositionAndRotation(avatarWorldPos, desiredRotWS);
@@ -649,6 +732,12 @@ namespace Basis.Scripts.BasisSdk.Players
         }
 
         public int GetMovementMode() => (int)LocalCharacterDriver.CurrentModeKind;
+
+        public float GetAvatarEyeHeight() => BasisHeightDriver.ScaledAvatarEyeHeight;
+        public void SetAvatarEyeHeight(float meters) => BasisHeightDriver.ApplyRuntimeOscEyeHeightOverride(meters);
+        public void SetAvatarEyeHeightByMultiplier(float multiplier) => BasisHeightDriver.ApplyRuntimeOscEyeHeightOverride(BasisHeightDriver.AvatarEyeHeight * multiplier);
+        public float GetAvatarEyeHeightMinimum() => BasisNetworkModeration.ServerMinAvatarEyeHeightMeters;
+        public float GetAvatarEyeHeightMaximum() => BasisNetworkModeration.ServerMaxAvatarEyeHeightMeters;
 
         public void SetJumpHeightOverride(string key, float jumpHeight)
         {

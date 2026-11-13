@@ -185,7 +185,7 @@ public partial class BasisHandHeldCameraUI
             // first time starts from what the player already sees live, not a jarring difference,
             // and a camera that never touches these controls behaves exactly as before they existed.
             overrideGlobalIllumination = false;
-            giMode = 0;               // Screen Space
+            giMode = 0;               // Radiance Cascades
             giSkinnedMeshes = 1;      // Proxy
             giLayers = 2;             // World And Avatars
             giQuality = 1;            // Medium
@@ -597,6 +597,11 @@ public partial class BasisHandHeldCameraUI
         /// </summary>
         public float directToScreenAlignX = 0.5f;
         public float directToScreenAlignY = 0.5f;
+        public int directToScreenDisplay;
+        public int passOutput;
+        public float passDepthRange = BasisCameraPasses.DefaultDepthRange;
+        public bool separatePasses;
+        public bool separateDepth = true, separateNormals = true, separateMask = true, separateMotion;
 
         /// <summary>
         /// Whether each saved photo is also printed into the world as a shared image pickup,
@@ -619,7 +624,7 @@ public partial class BasisHandHeldCameraUI
         /// </summary>
         public bool overrideGlobalIllumination;
 
-        /// <summary>Index into <c>SMModuleGlobalIlluminationURP.ModeOptions</c> (Screen Space / Ray Traced).</summary>
+        /// <summary>Index into <c>SMModuleGlobalIlluminationURP.ModeOptions</c> (Radiance Cascades / Ray Traced).</summary>
         public int giMode;
         /// <summary>Index into <c>SMModuleGlobalIlluminationURP.SkinnedMeshesOptions</c> (Off / Proxy). Ray traced only.</summary>
         public int giSkinnedMeshes;

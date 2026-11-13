@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using System;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
@@ -124,7 +125,8 @@ public struct BasisGlobalIlluminationRayInstance
 /// with the scene. Skinned renderers are baked into a mesh of their own on a per-frame budget so avatars
 /// bounce and occlude light in the pose they are actually standing in.
 /// </summary>
-public sealed class BasisGlobalIlluminationRayScene : IDisposable
+[AutoStaticsCleanup]
+public sealed partial class BasisGlobalIlluminationRayScene : IDisposable
 {
     public const int MaxInstances = 8192;
 
@@ -892,7 +894,7 @@ public sealed class BasisGlobalIlluminationRayScene : IDisposable
     public static bool IsBakedEmissive(Material material, Renderer renderer)
     {
         if (material == null || renderer == null) { return false; }
-        if ((material.globalIlluminationFlags & MaterialGlobalIlluminationFlags.BakedEmissive) == 0) { return false; }
+        if ((material.globalIlluminationFlags & MaterialGlobalIlluminationFlags.BakedEmission) == 0) { return false; }
         return renderer.lightmapIndex >= 0 && renderer.lightmapIndex < LightmapSettings.lightmaps.Length;
     }
 
@@ -1307,7 +1309,8 @@ public sealed class BasisGlobalIlluminationRayScene : IDisposable
                 int instanceId = entry.instanceIds[index];
                 if (instanceId >= 0)
                 {
-                    instances[instanceId].SetNormalMatrixOrthogonal(matrix);
+                    if (entry.pose.TryNormalRowsAt(index, out Vector4 n0, out Vector4 n1, out Vector4 n2)) { instances[instanceId].normal0 = n0; instances[instanceId].normal1 = n1; instances[instanceId].normal2 = n2; }
+                    else instances[instanceId].SetNormalMatrixOrthogonal(matrix);
                     MarkInstanceDirty(instanceId);
                 }
             }

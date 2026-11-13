@@ -250,10 +250,11 @@ namespace Basis.Scripts.Vehicles.Main
                 bool wantsRay = _hoverThrusters[i].PrepareHoverRay(out Vector3 origin, out Vector3 dir);
                 _hoverCommands[i] = new RaycastCommand(origin, dir, query, wantsRay ? 1000.0f : 0.0f);
             }
-            RaycastCommand.ScheduleBatch(_hoverCommands, _hoverHits, 1).Complete();
+            // A vehicle has a handful of thrusters: one job for the lot, not one per ray.
+            RaycastCommand.ScheduleBatch(_hoverCommands, _hoverHits, 8).Complete();
             for (int i = 0; i < count; i++)
             {
-                if (_hoverHits[i].colliderEntityId != 0)
+                if (_hoverHits[i].colliderEntityId.IsValid())
                 {
                     _hoverThrusters[i].ApplyHoverForce(_hoverHits[i].distance);
                 }

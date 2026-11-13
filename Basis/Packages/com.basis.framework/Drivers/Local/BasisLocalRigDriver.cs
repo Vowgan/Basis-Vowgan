@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.Scripts.BasisSdk.Players;
 using Basis.Scripts.Common;
 using Basis.Scripts.Device_Management;
@@ -19,10 +20,12 @@ using static BasisHeightDriver;
 using Basis.Scripts.Debugging;
 namespace Basis.Scripts.Drivers
 {
+    [AutoStaticsCleanup]
     [Serializable]
     public partial class BasisLocalRigDriver
     {
         public static float MinCutoff = 5.5f, Beta = 3.25f, DerivativeCutoff = 3f, SmoothingStrength = 1f;
+        const float MinSmoothingStrength = 0.001f;
         [System.NonSerialized] public PlayableGraph PlayableGraph;
         [System.NonSerialized] public readonly BasisPoseSkeleton PoseSkeleton = new BasisPoseSkeleton();
         [System.NonSerialized] public readonly BasisLocomotionPoseSystem LocomotionPose = new BasisLocomotionPoseSystem();
@@ -34,15 +37,17 @@ namespace Basis.Scripts.Drivers
         bool ikSolveScheduled, ikScatterPending, ikPublishPending;
         public Quaternion LeftHandIKOffset => IKDataReady ? IKJob.offsetRotationLeftHand : Quaternion.identity;
         public Quaternion RightHandIKOffset => IKDataReady ? IKJob.offsetRotationRightHand : Quaternion.identity;
+        public Quaternion LeftFootIKOffset => IKDataReady ? IKJob.offsetRotationLeftFoot : Quaternion.identity;
+        public Quaternion RightFootIKOffset => IKDataReady ? IKJob.offsetRotationRightFoot : Quaternion.identity;
         private BasisLocalPlayer localPlayer;
         public BasisTransformMapping basisTransformMapping;
         public const int sHips = 0, sHead = 1, sLeftFoot = 2, sRightFoot = 3, sChest = 4, sLeftLowerLeg = 5, sRightLowerLeg = 6, sLeftHand = 7, sRightHand = 8, sLeftLowerArm = 9, sRightLowerArm = 10, sLeftToe = 11, sRightToe = 12, sLeftShoulder = 13, sRightShoulder = 14, SlotCount = 15;
-        static readonly string[] SlotNames =
+        [NoAutoStaticsCleanup] static readonly string[] SlotNames =
         {
             "Hips", "Head", "LeftFoot", "RightFoot", "Chest", "LeftLowerLeg", "RightLowerLeg", "LeftHand", "RightHand", "LeftLowerArm", "RightLowerArm", "LeftToe", "RightToe", "LeftShoulder", "RightShoulder",
         };
         [System.Diagnostics.Conditional("UNITY_EDITOR")]
-        [System.Diagnostics.Conditional("DEVELOPMENT_BUILD")]
+        [System.Diagnostics.Conditional("UNITY_INCLUDE_INSTRUMENTATION")]
         private void WatchdogCheckFilterSlots(string stage)
         {
             if (!BasisFiniteWatchdog.Enabled || !posInputs.IsCreated)
@@ -94,7 +99,7 @@ namespace Basis.Scripts.Drivers
         System.IntPtr watchdogStreamPtr;
         string watchdogStreamStage;
         [System.Diagnostics.Conditional("UNITY_EDITOR")]
-        [System.Diagnostics.Conditional("DEVELOPMENT_BUILD")]
+        [System.Diagnostics.Conditional("UNITY_INCLUDE_INSTRUMENTATION")]
         private unsafe void WatchdogCheckPoseStream(string stage)
         {
             if (!BasisFiniteWatchdog.Enabled || !PoseSkeleton.IsCreated)
@@ -151,12 +156,6 @@ namespace Basis.Scripts.Drivers
         public static Quaternion sRotRightLowerLeg, sRotLeftHand, sRotRightHand, sRotLeftLowerArm, sRotRightLowerArm;
         public static Quaternion sRotLeftToe, sRotRightToe, sRotLeftShoulder, sRotRightShoulder;
         public static bool hasFallbackState;
-        private static Vector3 smoothedLeftButterflyHint, smoothedRightButterflyHint;
-        private static float smoothedLeftButterflyWeight, smoothedRightButterflyWeight;
-        private const float ButterflyKneeSmoothRate = 8f;
-        private static Vector3 smoothedLeftKneeFwdHint, smoothedRightKneeFwdHint;
-        private static float smoothedLeftKneeFwdWeight, smoothedRightKneeFwdWeight;
-        private const float KneeForwardSmoothRate = 10f;
         private static float footIKBlendWeightLeft = 0f, footIKBlendWeightRight = 0f;
         private static float footIKBlendWeight = 0f;
         private static float stationaryTimer = 0f;
@@ -195,10 +194,9 @@ namespace Basis.Scripts.Drivers
             ikPublishPending = false;
             PoseSkeleton.Build(animator.transform, CollectIKBones(basisTransformMapping));
             PoseSkeleton.SetTranslationFree(basisTransformMapping.Hips);
-            leftHipJointRestLocal = basisTransformMapping.Hips != null && basisTransformMapping.LeftUpperLeg != null ? basisTransformMapping.Hips.InverseTransformPoint(basisTransformMapping.LeftUpperLeg.position) : Vector3.zero;
-            rightHipJointRestLocal = basisTransformMapping.Hips != null && basisTransformMapping.RightUpperLeg != null ? basisTransformMapping.Hips.InverseTransformPoint(basisTransformMapping.RightUpperLeg.position) : Vector3.zero;
             BasisEerieMovementSetup.Create(ref IKJob, PoseSkeleton, basisTransformMapping);
             IKJobCreated = true;
+            unoverriddenValid = false;
             ResetSmoothingState();
             RefreshBodyFit();
             LocomotionPose.OnRigBuilt();
@@ -227,7 +225,7 @@ namespace Basis.Scripts.Drivers
             }
             var measurements = new BasisBodyFitMeasurements
             {
-                PlayerEyeHeight = BasisHeightDriver.PlayerEyeHeight, PlayerArmSpan = BasisHeightDriver.PlayerArmSpan, PlayerHipHeight = BasisHeightDriver.PlayerHipHeight, AvatarEyeHeight = BasisHeightDriver.AvatarEyeHeight, AvatarArmSpan = BasisHeightDriver.AvatarArmSpan, AvatarHipHeight = BasisHeightDriver.AvatarHipHeight, AvatarLegSpan = BasisHeightDriver.AvatarLegSpan, AvatarSpineSpan = BasisHeightDriver.AvatarSpineSpan, AvatarShoulderWidth = BasisHeightDriver.AvatarShoulderWidth,
+                PlayerEyeHeight = BasisHeightDriver.SizingEyeHeight, PlayerArmSpan = BasisHeightDriver.PlayerArmSpan, AvatarEyeHeight = BasisHeightDriver.AvatarEyeHeight, AvatarArmSpan = BasisHeightDriver.AvatarArmSpan, AvatarShoulderWidth = BasisHeightDriver.AvatarShoulderWidth,
 
                 UniformScale = BasisHeightDriver.AppliedUniformScale,
             };
@@ -248,16 +246,29 @@ namespace Basis.Scripts.Drivers
             {
                 BasisDebug.Log($"Body fit: arms not fitted - {BasisBodyFitCore.Describe(fit.ArmStatus)}", BasisDebug.LogTag.IK);
             }
-            if (fit.HasBodyFit)
-            {
-                BasisDebug.Log($"Body fit: legs scaled {fit.LegScale:F4}, spine scaled {fit.TorsoScale:F4}", BasisDebug.LogTag.IK);
-            }
-            else
-            {
-                BasisDebug.Log($"Body fit: legs and spine not fitted - {BasisBodyFitCore.Describe(fit.BodyStatus)}", BasisDebug.LogTag.IK);
-            }
         }
         public static BasisBodyFitResult AppliedBodyFit = BasisBodyFitResult.Identity;
+        /// <summary>
+        /// Gets a bone's fitted, pose-independent T-pose position in Animator-root coordinates at
+        /// the avatar's current rendered scale. This deliberately uses the pose skeleton rest data,
+        /// not the live Transform, so tracker calibration is unaffected by the current animation.
+        /// </summary>
+        public bool TryGetFittedTposeLocalScaled(Transform bone, out Vector3 position)
+        {
+            position = Vector3.zero;
+            Transform animatorRoot = basisTransformMapping != null ? basisTransformMapping.AnimatorRoot : null;
+            if (animatorRoot == null
+                || !PoseSkeleton.TryGetRestPositionRelativeTo(bone, animatorRoot, out Vector3 restLocal))
+            {
+                return false;
+            }
+
+            // TransformVector includes the current Animator-root and outer-wrapper scale. Removing
+            // only the root rotation leaves the same scaled local convention used by TposeLocalScaled
+            // and the load-time snapshot, including common 0.01 import scales.
+            position = Quaternion.Inverse(animatorRoot.rotation) * animatorRoot.TransformVector(restLocal);
+            return float.IsFinite(position.x) && float.IsFinite(position.y) && float.IsFinite(position.z);
+        }
         public void SetBodySettings()
         {
 
@@ -281,6 +292,7 @@ namespace Basis.Scripts.Drivers
                 IKJob = default;
                 IKJobCreated = false;
             }
+            unoverriddenValid = false;
             PoseSkeleton.Dispose();
             IKDataReady = false;
         }
@@ -350,9 +362,9 @@ namespace Basis.Scripts.Drivers
                 default: return false;
             }
         }
-        private static readonly float4[] groupPosTuning = new float4[BasisSmoothingProfiles.GroupCount], groupRotTuning = new float4[BasisSmoothingProfiles.GroupCount];
-        private static readonly bool[] groupOff = new bool[BasisSmoothingProfiles.GroupCount];
-        private static readonly BasisTrackingHardware[] groupHardware = new BasisTrackingHardware[BasisSmoothingProfiles.GroupCount];
+        [NoAutoStaticsCleanup] private static readonly float4[] groupPosTuning = new float4[BasisSmoothingProfiles.GroupCount], groupRotTuning = new float4[BasisSmoothingProfiles.GroupCount];
+        [NoAutoStaticsCleanup] private static readonly bool[] groupOff = new bool[BasisSmoothingProfiles.GroupCount];
+        [NoAutoStaticsCleanup] private static readonly BasisTrackingHardware[] groupHardware = new BasisTrackingHardware[BasisSmoothingProfiles.GroupCount];
         private static void ResolveGroupHardware()
         {
             for (int Index = 0; Index < groupHardware.Length; Index++)
@@ -416,7 +428,7 @@ namespace Basis.Scripts.Drivers
                 if (BasisSmoothingProfiles.IsCustom(preset))
                 {
                     profile = new BasisSmoothingProfile( bindings.MinCutoff.RawValue, bindings.Beta.RawValue, DerivativeCutoff, bindings.PositionHz.RawValue, bindings.RotationHz.RawValue);
-                    strength = Mathf.Max(1f, bindings.Strength.RawValue);
+                    strength = Mathf.Max(0f, bindings.Strength.RawValue);
                 }
                 else
                 {
@@ -424,7 +436,13 @@ namespace Basis.Scripts.Drivers
                     {
                         profile = new BasisSmoothingProfile(MinCutoff, Beta, DerivativeCutoff, PositionSmoothingHz, RotationSmoothingHz);
                     }
-                    strength = Mathf.Max(1f, SmoothingStrength);
+                    strength = Mathf.Max(0f, SmoothingStrength);
+                }
+                // Strength 0 turns smoothing off for the group; between 0 and 1 the cutoffs rise and it fades toward pass-through.
+                if (strength <= MinSmoothingStrength)
+                {
+                    groupOff[Index] = true;
+                    strength = 1f;
                 }
                 float minCutoff = profile.MinCutoff / strength, dCutoff = profile.DerivativeCutoff / strength;
                 groupPosTuning[Index] = new float4(minCutoff, profile.Beta, dCutoff, ExpAlpha(profile.PositionHz / strength, deltaTime));
@@ -474,10 +492,6 @@ namespace Basis.Scripts.Drivers
                 for (int i = 0; i < SlotCount; i++) fallbackPosStates[i] = float3.zero;
             }
 
-            smoothedLeftButterflyHint = smoothedRightButterflyHint = Vector3.zero;
-            smoothedLeftButterflyWeight = smoothedRightButterflyWeight = 0f;
-            smoothedLeftKneeFwdHint = smoothedRightKneeFwdHint = Vector3.zero;
-            smoothedLeftKneeFwdWeight = smoothedRightKneeFwdWeight = 0f;
             footIKBlendWeightLeft = footIKBlendWeightRight = footIKBlendWeight = 0f;
             stationaryTimer = 0f;
         }
@@ -489,20 +503,22 @@ namespace Basis.Scripts.Drivers
             }
             return rawPos;
         }
-        private void PublishIKWorldData()
+        private void PublishIKWorldData(bool posesRead)
         {
-            if (!ikPublishTransforms.isCreated || ikPublishControls == null || ikPublishTransforms.length != ikPublishControls.Length)
+            if (!ikPublishTransforms.isCreated || ikPublishTransforms.length != ikPublishControls.Length)
             {
                 PublishIKWorldDataMainThread();
                 return;
             }
             if (ikPublishControls.Length > 0)
             {
-
-                new BasisReadBoneWorldPoseJob
+                if (!posesRead)
                 {
-                    Positions = ikPublishPositions, Rotations = ikPublishRotations,
-                }.RunReadOnly(ikPublishTransforms);
+                    new BasisReadBoneWorldPoseJob
+                    {
+                        Positions = ikPublishPositions, Rotations = ikPublishRotations,
+                    }.RunReadOnly(ikPublishTransforms);
+                }
                 for (int i = 0; i < ikPublishControls.Length; i++)
                 {
                     ikPublishControls[i].SetIKWorldData(ikPublishPositions[i], ikPublishRotations[i]);
@@ -621,6 +637,11 @@ namespace Basis.Scripts.Drivers
             BodyData.minHeadSpineHeight = minHeadSpineHeight * (BodyData.tposeTorsoFitScale > 0f ? BodyData.tposeTorsoFitScale : 1f);
 
             BodyData.RescaleTposeScalars(BasisEerieMovementSetup.AppliedAvatarScale());
+            float chain = BodyData.RalivRestChainLength();
+            if (chain > 0f)
+            {
+                BodyData.minHeadSpineHeight = chain;
+            }
         }
         public void Spine()
         {
@@ -633,6 +654,7 @@ namespace Basis.Scripts.Drivers
                 IKJob.Destroy();
                 IKJobCreated = false;
             }
+            unoverriddenValid = false;
             IKJob = default;
             BasisAnimationRiggingHelper.CreateBasisFullBodyRIG(localPlayer, basisTransformMapping, ref IKJob);
             IKDataReady = true;
@@ -650,7 +672,7 @@ namespace Basis.Scripts.Drivers
                     continue;
                 }
                 data.SetWeight(slot, false);
-                data.SetOffsetRotation(slot, t.rotation);
+                data.SetOffsetRotation(slot, Quaternion.Inverse(localPlayer.AvatarTransform.rotation) * t.rotation);
                 data.SetTargetRotation(slot, t.rotation);
             }
             data.minFactor = 0.95f;
@@ -665,68 +687,9 @@ namespace Basis.Scripts.Drivers
         {
             Vector3 rootUp = BasisLocalPlayer.localToWorldMatrix.MultiplyVector(Vector3.up);
             data.playerUp = rootUp.sqrMagnitude > 1e-8f ? rootUp.normalized : Vector3.up;
-            data.maxBendDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKMaxBendDeg.RawValue;
-            data.maxChestDeltaDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKMaxChestDelta.RawValue;
-            data.spineBendPitch = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineBendPitch.RawValue;
-            data.spineBendYaw = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineBendYaw.RawValue;
-            data.spineBendRoll = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineBendRoll.RawValue;
-            data.upperChestBendPitch = Basis.BasisUI.BasisSettingsDefaults.FBIKUpperChestBendPitch.RawValue;
-            data.upperChestBendYaw = Basis.BasisUI.BasisSettingsDefaults.FBIKUpperChestBendYaw.RawValue;
-            data.upperChestBendRoll = Basis.BasisUI.BasisSettingsDefaults.FBIKUpperChestBendRoll.RawValue;
-            data.chestBendPitch = Basis.BasisUI.BasisSettingsDefaults.FBIKChestBendPitch.RawValue;
-            data.chestBendYaw = Basis.BasisUI.BasisSettingsDefaults.FBIKChestBendYaw.RawValue;
-            data.chestBendRoll = Basis.BasisUI.BasisSettingsDefaults.FBIKChestBendRoll.RawValue;
-            data.neckYawShare = Basis.BasisUI.BasisSettingsDefaults.FBIKNeckYawShare.RawValue;
-            data.spineStretchMax = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineStretchMax.RawValue;
-            data.hipHingeStartDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKHipHingeStartDeg.RawValue;
-            data.hipHingeMaxAddDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKHipHingeMaxAddDeg.RawValue;
-            data.chestSpringHz = Basis.BasisUI.BasisSettingsDefaults.FBIKChestSpringHz.RawValue;
-            data.chestSpringDamping = Basis.BasisUI.BasisSettingsDefaults.FBIKChestSpringDamping.RawValue;
-            data.spineMaxForwardDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineMaxForwardDeg.RawValue;
-            data.spineMaxBackwardDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineMaxBackwardDeg.RawValue;
-            data.spineMaxLateralDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineMaxLateralDeg.RawValue;
-            data.spineSquishBoost = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineSquishBoost.RawValue;
-            data.spineGazeFollow = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineGazeFollow.RawValue;
-            data.neckGazeFollow = Basis.BasisUI.BasisSettingsDefaults.FBIKNeckGazeFollow.RawValue;
-            data.neckExtensionDamp = Basis.BasisUI.BasisSettingsDefaults.FBIKNeckExtensionDamp.RawValue;
-            data.neckFlexionDamp = Basis.BasisUI.BasisSettingsDefaults.FBIKNeckFlexionDamp.RawValue;
             data.moveBodyBackWhenCrouching = Basis.BasisUI.BasisSettingsDefaults.FBIKMoveBodyBackWhenCrouching.RawValue;
-            data.trunkCounterbalance = Basis.BasisUI.BasisSettingsDefaults.FBIKTrunkCounterbalance.RawValue;
-            data.spineCCDRelax = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineCCDRelax.RawValue;
-            data.spineTwistKeep = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineTwistKeep.RawValue;
-            data.spineNeckTwistKeep = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineNeckTwistKeep.RawValue;
-            data.neckMaxConeDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKNeckMaxConeDeg.RawValue;
-            data.chestArmSwingFactor = Basis.BasisUI.BasisSettingsDefaults.FBIKChestArmSwingFactor.RawValue;
-            data.chestArmSwingMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKChestArmSwingMaxDeg.RawValue;
-            data.lowerArmTwistFraction = Basis.BasisUI.BasisSettingsDefaults.FBIKLowerArmTwistFraction.RawValue;
-            data.upperArmTwistFraction = Basis.BasisUI.BasisSettingsDefaults.FBIKUpperArmTwistFraction.RawValue;
-            data.anatDifferentialStiffness = Basis.BasisUI.BasisSettingsDefaults.FBIKAnatDifferentialStiffness.RawValue;
-            data.anatCervicalLordosis = Basis.BasisUI.BasisSettingsDefaults.FBIKAnatCervicalLordosis.RawValue;
-            data.anatPelvicTwistRouting = Basis.BasisUI.BasisSettingsDefaults.FBIKAnatPelvicTwistRouting.RawValue;
-            data.spineAnatomicalRom = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineAnatomicalRom.RawValue;
-            data.chestIkTarget = Basis.BasisUI.BasisSettingsDefaults.FBIKChestIKTarget.RawValue;
-            data.legSwivelSmoothing = Basis.BasisUI.BasisSettingsDefaults.FBIKLegSwivelSmoothing.RawValue;
-            data.kneeFootPoleHold = Basis.BasisUI.BasisSettingsDefaults.FBIKKneeFootPoleHold.RawValue;
-            data.kneeFootPoleConditioning = Basis.BasisUI.BasisSettingsDefaults.FBIKKneeFootPoleConditioning.RawValue;
-            data.lordosisPitchGainDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisPitchGainDeg.RawValue;
-            data.lordosisBaseDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisBaseDeg.RawValue;
-            data.lordosisNeckShare = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisNeckShare.RawValue;
-            data.lordosisMaxHeadPitchDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisMaxHeadPitchDeg.RawValue;
-            data.lordosisExtremeStartDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeStartDeg.RawValue;
-            data.lordosisExtremeFullDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeFullDeg.RawValue;
-            data.lordosisExtremeRollForwardMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeRollForwardMaxDeg.RawValue;
-            data.lordosisExtremeRollBackwardMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeRollBackwardMaxDeg.RawValue;
 
             float collisionScale = BasisHeightDriver.AvatarToDefaultRatioScaledWithAvatarScale;
-
-            data.lordosisExtremeHipsHorizontalMax = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeHipsHorizontalMax.RawValue * collisionScale;
-            data.lordosisExtremeChestHorizontalMax = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeChestHorizontalMax.RawValue * collisionScale;
-            data.lordosisExtremeHipsHorizontalLookUp = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeHipsHorizontalLookUp.RawValue * collisionScale;
-            data.lordosisExtremeChestHorizontalLookUp = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeChestHorizontalLookUp.RawValue * collisionScale;
-            data.lordosisExtremeHipsDownMax = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeHipsDownMax.RawValue * collisionScale;
-            data.lordosisExtremeChestDownMax = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeChestDownMax.RawValue * collisionScale;
-            data.lordosisExtremeHipsDownLookUp = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeHipsDownLookUp.RawValue * collisionScale;
-            data.lordosisExtremeChestDownLookUp = Basis.BasisUI.BasisSettingsDefaults.FBIKLordosisExtremeChestDownLookUp.RawValue * collisionScale;
 
             data.collisionsEnabled = Basis.BasisUI.BasisSettingsDefaults.FBIKCollisionsEnabled.RawValue;
             data.protectElbow = Basis.BasisUI.BasisSettingsDefaults.FBIKProtectElbow.RawValue;
@@ -734,42 +697,12 @@ namespace Basis.Scripts.Drivers
             data.collideTrackedElbow = Basis.BasisUI.BasisSettingsDefaults.FBIKCollideTrackedElbow.RawValue;
 
             data.shoulderSolveEnabled = Basis.BasisUI.BasisSettingsDefaults.FBIKShoulderSolveEnabled.RawValue;
-            data.shoulderShrugEnabled = Basis.BasisUI.BasisSettingsDefaults.FBIKShoulderShrug.RawValue;
 
             data.shoulderElevationFactor = Basis.BasisUI.BasisSettingsDefaults.FBIKShoulderElevation.RawValue;
             data.shoulderProtractionFactor = Basis.BasisUI.BasisSettingsDefaults.FBIKShoulderProtraction.RawValue;
-            data.shoulderMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKShoulderMaxDeg.RawValue;
             data.shoulderTrackerBlendTime = Basis.BasisUI.BasisSettingsDefaults.FBIKShoulderTrackerBlend.RawValue;
-            data.armJointLimits = Basis.BasisUI.BasisSettingsDefaults.FBIKArmJointLimits.RawValue;
-            data.armReachSoftness = Basis.BasisUI.BasisSettingsDefaults.FBIKArmReachSoftness.RawValue;
             data.armSwivelSmoothTime = Basis.BasisUI.BasisSettingsDefaults.FBIKArmSwivelSmoothTime.RawValue;
             data.armSwivelMaxRateDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKArmSwivelMaxRate.RawValue;
-            data.armSwivelSwitchDwell = Basis.BasisUI.BasisSettingsDefaults.FBIKArmSwivelSwitchDwell.RawValue;
-            data.armPriorWeight = Basis.BasisUI.BasisSettingsDefaults.FBIKArmPriorWeight.RawValue;
-            data.armPreviousWeight = Basis.BasisUI.BasisSettingsDefaults.FBIKArmPreviousWeight.RawValue;
-            data.forearmPronationMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKForearmPronationMax.RawValue;
-            data.forearmSupinationMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKForearmSupinationMax.RawValue;
-            data.humeralInternalMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKHumeralInternalMax.RawValue;
-            data.humeralExternalMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKHumeralExternalMax.RawValue;
-            data.wristFlexionMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKWristFlexionMax.RawValue;
-            data.wristExtensionMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKWristExtensionMax.RawValue;
-            data.wristRadialMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKWristRadialMax.RawValue;
-            data.wristUlnarMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKWristUlnarMax.RawValue;
-            data.thoracicBendStiffen = Basis.BasisUI.BasisSettingsDefaults.FBIKThoracicBendStiffen.RawValue;
-            data.spineTautBandFrac = Basis.BasisUI.BasisSettingsDefaults.FBIKSpineTautBandFrac.RawValue;
-            data.bendTwistCoupling = Basis.BasisUI.BasisSettingsDefaults.FBIKBendTwistCoupling.RawValue;
-            data.neckGazeFollowMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKNeckGazeFollowMaxDeg.RawValue;
-            data.trunkCounterbalanceMaxSpineFrac = Basis.BasisUI.BasisSettingsDefaults.FBIKTrunkCounterbalanceMaxFrac.RawValue;
-            data.chestIkWeight = Basis.BasisUI.BasisSettingsDefaults.FBIKChestIkWeight.RawValue;
-            data.chestIkIterations = Mathf.Max(1, Mathf.RoundToInt(Basis.BasisUI.BasisSettingsDefaults.FBIKChestIkIterations.RawValue));
-            data.chestIkHeadRestoreSweeps = Mathf.Max(1, Mathf.RoundToInt(Basis.BasisUI.BasisSettingsDefaults.FBIKChestIkHeadRestoreSweeps.RawValue));
-            data.chestPosPullMaxDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKChestPosPullMaxDeg.RawValue;
-            data.chestPullMaxDist = Basis.BasisUI.BasisSettingsDefaults.FBIKChestPullMaxDist.RawValue;
-            data.chestHeadBudget = BasisEerieMovementSetup.ChestHeadBudgetMeters;
-            data.chestFollowChestShare = Basis.BasisUI.BasisSettingsDefaults.FBIKChestFollowChestShare.RawValue;
-            data.trackedKneeSwivelMinCutoffHz = Basis.BasisUI.BasisSettingsDefaults.FBIKTrackedKneeSwivelMinCutoffHz.RawValue;
-            data.trackedKneeSwivelBeta = Basis.BasisUI.BasisSettingsDefaults.FBIKTrackedKneeSwivelBeta.RawValue;
-            data.trackedKneeSwivelDerivCutoffHz = Basis.BasisUI.BasisSettingsDefaults.FBIKTrackedKneeSwivelDerivCutoffHz.RawValue;
 
             data.handRadius = Basis.BasisUI.BasisSettingsDefaults.FBIKHandRadius.RawValue * collisionScale;
             data.handSkin = Basis.BasisUI.BasisSettingsDefaults.FBIKHandSkin.RawValue * collisionScale;
@@ -817,85 +750,9 @@ namespace Basis.Scripts.Drivers
         }
         private static float RigWeight(BasisLocalBoneControl control)
         {
-            if (control == null || control.HasRigLayer != BasisHasRigLayer.HasRigLayer) return 0f;
+            if (control.HasRigLayer != BasisHasRigLayer.HasRigLayer) return 0f;
             float w = control.RigLayerWeight;
             return w > 0f ? (w < 1f ? w : 1f) : 0f;
-        }
-        private static bool TryComputeButterflyKnee( bool isLeft, Quaternion hipsRot, Vector3 playerUp, float maxOpenDeg, float supineFloor, float dt, Vector3 defaultBendDir, bool haveLeg, Vector3 hipPos, float upperLength, float lowerLength, Vector3 footPos, Quaternion footRot, Vector3 playspacePos, Quaternion playspaceRot, ref Vector3 smoothedHint, ref float smoothedWeight, out Vector3 hintPos, out float weight)
-        {
-            hintPos = default;
-            weight = 0f;
-            if (!haveLeg)
-            {
-                smoothedWeight = 0f;
-                return false;
-            }
-            Vector3 hipsRight = hipsRot * Vector3.right, hipsForward = hipsRot * Vector3.forward;
-            BasisButterflyKneeInput input;
-            input.HipPosition = hipPos;
-            input.FootPosition = footPos;
-            input.FootInstepDir = footRot * Vector3.up;
-            input.OutwardDir = isLeft ? -hipsRight : hipsRight;
-            input.DefaultBendDir = defaultBendDir.sqrMagnitude > 1e-6f ? defaultBendDir : hipsForward;
-            input.PlayerUp = playerUp;
-            input.TorsoFacingDir = hipsForward;
-            input.UpperLength = upperLength;
-            input.LowerLength = lowerLength;
-            input.MaxOpenDeg = maxOpenDeg;
-            input.Strength = 1f;
-            input.SupineFloor = supineFloor;
-            BasisButterflyKneeCore.Solve(input, out BasisButterflyKneeResult result);
-
-            float alpha = 1f - Mathf.Exp(-ButterflyKneeSmoothRate * dt);
-            Vector3 localHint = Quaternion.Inverse(playspaceRot) * (result.KneeHint - playspacePos);
-            if (smoothedWeight <= 0.0001f && result.HintWeight <= 0.0001f)
-            {
-
-                smoothedHint = localHint;
-                smoothedWeight = 0f;
-                return false;
-            }
-            smoothedHint = Vector3.Lerp(smoothedHint, localHint, alpha);
-            smoothedWeight = Mathf.Lerp(smoothedWeight, result.HintWeight, alpha);
-            if (smoothedWeight <= 0.001f)
-            {
-                return false;
-            }
-            hintPos = playspacePos + playspaceRot * smoothedHint;
-            weight = smoothedWeight;
-            return true;
-        }
-        private static bool TryComputeKneeForward( Quaternion hipsRot, float coupling, float smoothRate, Vector3 playerUp, float dt, bool haveLeg, Vector3 hipPos, float upperLength, Vector3 footPos, Quaternion footRot, Quaternion playspaceRot, ref Vector3 smoothedBendDir, ref float smoothedWeight, out Vector3 hintPos, out float weight, out Vector3 bendDir)
-        {
-            hintPos = default;
-            weight = 0f;
-            bendDir = hipsRot * Vector3.forward;
-            if (!haveLeg)
-            {
-                smoothedWeight = 0f;
-                return false;
-            }
-            BasisKneeForwardInput input;
-            input.HipPosition = hipPos;
-            input.FootPosition = footPos;
-            input.FootForwardDir = footRot * Vector3.forward;
-            input.BodyForwardDir = hipsRot * Vector3.forward;
-            input.PlayerUp = playerUp;
-            input.UpperLength = upperLength;
-            input.Coupling = coupling;
-            input.Strength = 1f;
-            BasisKneeForwardCore.Solve(input, out BasisKneeForwardResult result);
-            float alpha = 1f - Mathf.Exp(-smoothRate * dt);
-            Vector3 localBend = Quaternion.Inverse(playspaceRot) * result.BendDir;
-            if (smoothedBendDir.sqrMagnitude < 1e-6f) smoothedBendDir = localBend;
-            else smoothedBendDir = Vector3.Slerp(smoothedBendDir.normalized, localBend, alpha);
-            smoothedWeight = Mathf.Lerp(smoothedWeight, result.HintWeight, alpha);
-            bendDir = smoothedBendDir.sqrMagnitude > 1e-6f ? playspaceRot * smoothedBendDir.normalized : result.BendDir;
-            Vector3 mid = (hipPos + footPos) * 0.5f;
-            float radius = input.UpperLength > 1e-5f ? input.UpperLength : 0.4f;
-            hintPos = mid + bendDir * radius;
-            weight = smoothedWeight;
-            return weight > 0.001f;
         }
         static List<Transform> CollectIKBones(BasisTransformMapping d) => new List<Transform>
         {
@@ -914,6 +771,138 @@ namespace Basis.Scripts.Drivers
             data.SetTargetPosition((int)bone, position);
             data.SetTargetRotation((int)bone, rotation);
         }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void SetOverrideRotation(HumanBodyBones bone, in Quaternion rotation)
+        {
+            ref BasisEerieMovement data = ref IKJob;
+            data.SetTargetRotation((int)bone, rotation);
+        }
+        [MethodImpl(MethodImplOptions.AggressiveInlining)]
+        public void SetOverrideBlend(HumanBodyBones bone, float blend)
+        {
+            ref BasisEerieMovement data = ref IKJob;
+            data.SetBlend((int)bone, blend);
+        }
+        public bool TryGetUnoverriddenPose(HumanBodyBones bone, out Vector3 position, out Quaternion rotation)
+        {
+            int s = BasisEerieMovement.Slot((int)bone);
+            if (!unoverriddenValid || s < 0 || s >= BasisEerieMovement.Count || !IKJobCreated || (IKJob.plan.boundSlots & (1u << s)) == 0)
+            {
+                position = default;
+                rotation = Quaternion.identity;
+                return false;
+            }
+            position = unoverriddenPositions[s];
+            rotation = s < IKJob.slotOffsets.Length ? unoverriddenRotations[s] * Quaternion.Inverse(IKJob.slotOffsets[s]) : unoverriddenRotations[s];
+            return true;
+        }
+        void CaptureUnoverriddenPose()
+        {
+            if (!IKJob.solvedPositions.IsCreated || !IKJob.solvedRotations.IsCreated)
+            {
+                unoverriddenValid = false;
+                return;
+            }
+            IKJob.solvedPositions.CopyTo(unoverriddenPositions);
+            IKJob.solvedRotations.CopyTo(unoverriddenRotations);
+            unoverriddenValid = true;
+        }
+        struct EffectorOverride
+        {
+            public bool on, trackedValid;
+            public float blend;
+            public Vector3 position, trackedPosition;
+            public Quaternion rotation, trackedRotation;
+        }
+        readonly EffectorOverride[] effectors = { Effector(), Effector(), Effector(), Effector() };
+        static EffectorOverride Effector() => new EffectorOverride { blend = 1f, rotation = Quaternion.identity, trackedRotation = Quaternion.identity };
+        static int EffectorIndex(HumanBodyBones bone)
+        {
+            switch (bone)
+            {
+                case HumanBodyBones.LeftHand: return 0;
+                case HumanBodyBones.RightHand: return 1;
+                case HumanBodyBones.LeftFoot: return 2;
+                case HumanBodyBones.RightFoot: return 3;
+                default: return -1;
+            }
+        }
+        public static bool IsEffector(HumanBodyBones bone) => EffectorIndex(bone) >= 0;
+        public void SetEffectorUsage(HumanBodyBones bone, bool enabled)
+        {
+            int i = EffectorIndex(bone);
+            if (i >= 0) effectors[i].on = enabled;
+        }
+        public void SetEffectorOverride(HumanBodyBones bone, in Vector3 position, in Quaternion rotation)
+        {
+            int i = EffectorIndex(bone);
+            if (i < 0) return;
+            effectors[i].position = position;
+            effectors[i].rotation = rotation;
+        }
+        public void SetEffectorBlend(HumanBodyBones bone, float blend)
+        {
+            int i = EffectorIndex(bone);
+            if (i >= 0) effectors[i].blend = blend > 0f ? (blend < 1f ? blend : 1f) : 0f;
+        }
+        public bool TryGetTrackedEffector(HumanBodyBones bone, out Vector3 position, out Quaternion rotation)
+        {
+            int i = EffectorIndex(bone);
+            if (i < 0 || !effectors[i].trackedValid)
+            {
+                position = default;
+                rotation = Quaternion.identity;
+                return false;
+            }
+            position = effectors[i].trackedPosition;
+            rotation = effectors[i].trackedRotation;
+            return true;
+        }
+        void ApplyEffectorOverrides()
+        {
+            ref BasisEerieMovement data = ref IKJob;
+            ApplyHandEffector(ref effectors[0], ref data.plan.leftArm, ref data.targetPositionLeftHand, ref data.targetRotationLeftHand, data.offsetRotationLeftHand);
+            ApplyHandEffector(ref effectors[1], ref data.plan.rightArm, ref data.targetPositionRightHand, ref data.targetRotationRightHand, data.offsetRotationRightHand);
+            ApplyFootEffector(ref effectors[2], ref data.plan.leftLeg, ref data.targetPositionLeftLowerLeg, ref data.targetRotationLeftLowerLeg, data.offsetRotationLeftFoot);
+            ApplyFootEffector(ref effectors[3], ref data.plan.rightLeg, ref data.targetPositionRightLowerLeg, ref data.targetRotationRightLowerLeg, data.offsetRotationRightFoot);
+        }
+        static void ApplyHandEffector(ref EffectorOverride e, ref BasisEerieArmPlan arm, ref Vector3 targetPosition, ref Quaternion targetRotation, Quaternion offset)
+        {
+            float tracked = arm.solve ? arm.weight : 0f;
+            e.trackedValid = tracked > 0f;
+            if (e.trackedValid)
+            {
+                e.trackedPosition = targetPosition;
+                e.trackedRotation = targetRotation * offset;
+            }
+            if (!e.on || !arm.has || !(e.blend > 0f)) return;
+            Quaternion wanted = e.rotation * Quaternion.Inverse(offset);
+            targetPosition = tracked > 0f ? Vector3.Lerp(targetPosition, e.position, e.blend) : e.position;
+            targetRotation = tracked > 0f ? Quaternion.Slerp(targetRotation, wanted, e.blend) : wanted;
+            arm.weight = tracked + (1f - tracked) * e.blend;
+            arm.solve = arm.weight > 0f;
+        }
+        static void ApplyFootEffector(ref EffectorOverride e, ref BasisEerieLegPlan leg, ref Vector3 targetPosition, ref Quaternion targetRotation, Quaternion offset)
+        {
+            float tracked = leg.solve ? leg.weight : 0f;
+            e.trackedValid = tracked > 0f;
+            if (e.trackedValid)
+            {
+                e.trackedPosition = targetPosition;
+                e.trackedRotation = targetRotation * offset;
+            }
+            if (!e.on || !leg.has || !(e.blend > 0f)) return;
+            Quaternion wanted = e.rotation * Quaternion.Inverse(offset);
+            bool blendRotation = tracked > 0f && !leg.preserveTip;
+            targetPosition = tracked > 0f ? Vector3.Lerp(targetPosition, e.position, e.blend) : e.position;
+            targetRotation = blendRotation ? Quaternion.Slerp(targetRotation, wanted, e.blend) : wanted;
+            leg.weight = tracked + (1f - tracked) * e.blend;
+            leg.solve = leg.weight > 0f;
+            leg.preserveTip = false;
+        }
+        readonly Vector3[] unoverriddenPositions = new Vector3[BasisEerieMovement.Count];
+        readonly Quaternion[] unoverriddenRotations = new Quaternion[BasisEerieMovement.Count];
+        bool unoverriddenValid;
         private Transform ResolveHumanoidBoneTransform(HumanBodyBones bone)
         {
 
@@ -927,14 +916,14 @@ namespace Basis.Scripts.Drivers
         }
         bool frameFootSimScheduled, frameFootReengage, trackersDisabled;
         BasisEerieFrameFacts frameFacts;
-        Quaternion frameHipsRotation, frameLeftSimFootRotation, frameRightSimFootRotation, frameLeftElbowToBone, frameRightElbowToBone, frameLeftKneeToBone, frameRightKneeToBone, framePlayspaceRotation;
-        Vector3 framePlayerUpDirection, framePlayspacePosition, frameLeftKneeAssistHint, frameRightKneeAssistHint, frameLeftKneeBendAxis, frameRightKneeBendAxis;
-        Vector3 leftHipJointRestLocal, rightHipJointRestLocal;
+        Quaternion frameHipsRotation, frameLeftSimFootRotation, frameRightSimFootRotation, frameLeftElbowToBone, frameRightElbowToBone, frameLeftKneeToBone, frameRightKneeToBone;
+        Vector3 framePlayerUpDirection;
         float framePlayerUpScale;
         public void ScheduleLocomotionPose(BasisLocalPlayer player, float deltaTime)
         {
             CompleteSolveIfPending();
-            Animator animator = player?.BasisAvatar != null ? player.BasisAvatar.Animator : null;
+            var avatar = player.BasisAvatar;
+            Animator animator = avatar != null ? avatar.Animator : null;
             BasisLocoParams frameParams = player.LocalAnimatorDriver.GetLocoParams();
             LocomotionPose.Schedule(this, animator, in frameParams, deltaTime);
         }
@@ -964,6 +953,7 @@ namespace Basis.Scripts.Drivers
             Step13FillKneeBendPreferences();
             Step14FillArmTargets();
             bool basePoseInStream = Step15JoinBasePose();
+            ApplyEffectorOverrides();
             Step16ScheduleSolve(deltaTime, basePoseInStream);
             ikPublishPending = true;
         }
@@ -985,13 +975,13 @@ namespace Basis.Scripts.Drivers
             facts.deltaTime = deltaTime;
             facts.footSimReady = footDriver.IsInitialized;
             facts.footIKSetting = Basis.BasisUI.BasisSettingsDefaults.FootIKEnabled.RawValue;
-            facts.trackerBendNormal = Basis.BasisUI.BasisSettingsDefaults.FBIKTrackerBendNormal.RawValue;
             facts.moving = localPlayer.LocalCharacterDriver.IsLocomoting;
             facts.prone = localPlayer.LocalCharacterDriver.IsProne;
-            facts.seated = localPlayer.LocalSeatDriver.IsSeated;
+            facts.seated = localPlayer.LocalSeatDriver.HipsPinned;
             facts.upright = BasisLocalPlayspaceMover.FlipUpSign > 0f;
             facts.hipsTracked = fbt && BasisLocalBoneDriver.HipsControl.HasTracked == BasisHasTracked.HasTracker;
-            facts.chestTracked = HasRigLayer(BasisLocalBoneDriver.ChestControl);
+            facts.chestTracked = fbt && BasisLocalBoneDriver.ChestControl.HasTracked == BasisHasTracked.HasTracker;
+            facts.chestFollowsBody = facts.chestTracked && BasisLocalBoneDriver.ChestControl.TrackerFollowsBody;
             facts.leftFootTracked = leftFoot;
             facts.rightFootTracked = rightFoot;
             facts.leftLegTracked = leftFoot || (fbt && BasisLocalBoneDriver.LeftUpperLegControl.HasTracked == BasisHasTracked.HasTracker);
@@ -1116,13 +1106,11 @@ namespace Basis.Scripts.Drivers
             BasisLocalFootDriver footDriver = localPlayer.BasisLocalFootDriver;
             Matrix4x4 playspace = BasisLocalPlayer.localToWorldMatrix;
             Vector3 playerUpScaled = playspace.MultiplyVector(Vector3.up);
-            framePlayspacePosition = playspace.GetPosition();
-            framePlayspaceRotation = playspace.rotation;
             framePlayerUpScale = playerUpScaled.magnitude;
             framePlayerUpDirection = framePlayerUpScale > 1e-6f ? playerUpScaled / framePlayerUpScale : Vector3.up;
             if (trackersDisabled)
             {
-                facts.hipsTracked = facts.chestTracked = facts.leftLegTracked = facts.rightLegTracked = facts.leftFootTracked = facts.rightFootTracked = facts.leftKneeTracked = facts.rightKneeTracked = false;
+                facts.hipsTracked = facts.chestTracked = facts.chestFollowsBody = facts.leftLegTracked = facts.rightLegTracked = facts.leftFootTracked = facts.rightFootTracked = facts.leftKneeTracked = facts.rightKneeTracked = false;
                 facts.leftElbowTracked = facts.rightElbowTracked = facts.leftShoulderTracked = facts.rightShoulderTracked = facts.leftToeTracked = facts.rightToeTracked = false;
             }
             facts.leftSimFootRotation = BasisEeriePlanner.footRotationFromSim && facts.footSimReady && TryFootTargetRotation(footDriver.LeftFootRotation, data.offsetRotationLeftFoot, out frameLeftSimFootRotation);
@@ -1133,59 +1121,14 @@ namespace Basis.Scripts.Drivers
             facts.rightElbowRoll = BasisLimbRollStore.TryGet(BasisBoneTrackedRole.RightLowerArm, out frameRightElbowToBone);
             facts.leftKneeRoll = BasisLimbRollStore.TryGet(BasisBoneTrackedRole.LeftLowerLeg, out frameLeftKneeToBone);
             facts.rightKneeRoll = BasisLimbRollStore.TryGet(BasisBoneTrackedRole.RightLowerLeg, out frameRightKneeToBone);
-            facts.leftKneeBendNormal = BasisBendNormalStore.TryGet(BasisBoneTrackedRole.LeftLowerLeg, out frameLeftKneeBendAxis);
-            facts.rightKneeBendNormal = BasisBendNormalStore.TryGet(BasisBoneTrackedRole.RightLowerLeg, out frameRightKneeBendAxis);
             unsafe
             {
                 float3* pOut = (float3*)posOutputs.GetUnsafeReadOnlyPtr();
                 quaternion* rOut = (quaternion*)rotOutputs.GetUnsafeReadOnlyPtr();
                 frameHipsRotation = rOut[sHips];
-                facts.leftKneeAssist = BasisEeriePlanner.KneeAssistWanted(in facts, true) ? ComputeKneeAssist(true, pOut[sHips], pOut[sLeftFoot], rOut[sLeftFoot], deltaTime, out frameLeftKneeAssistHint) : 0f;
-                facts.rightKneeAssist = BasisEeriePlanner.KneeAssistWanted(in facts, false) ? ComputeKneeAssist(false, pOut[sHips], pOut[sRightFoot], rOut[sRightFoot], deltaTime, out frameRightKneeAssistHint) : 0f;
             }
             BasisEeriePlanner.Frame(ref data, in facts);
             BasisLocalPlayerMarkers.IKDestBuildIKTargets.End();
-        }
-        void LegPose(bool isLeft, Vector3 hipsPos, Quaternion hipsRot, out bool valid, out Vector3 hipPos, out float upperLength, out float lowerLength)
-        {
-            BasisLocalBoneControl upper = isLeft ? BasisLocalBoneDriver.LeftUpperLegControl : BasisLocalBoneDriver.RightUpperLegControl, lower = isLeft ? BasisLocalBoneDriver.LeftLowerLegControl : BasisLocalBoneDriver.RightLowerLegControl, foot = isLeft ? BasisLocalBoneDriver.LeftFootControl : BasisLocalBoneDriver.RightFootControl;
-            Transform hipsBone = basisTransformMapping != null ? basisTransformMapping.Hips : null;
-            valid = hipsBone != null && upper != null && lower != null && foot != null && upper.HasIKWorldData && lower.HasIKWorldData && foot.HasIKWorldData;
-            if (!valid)
-            {
-                hipPos = Vector3.zero;
-                upperLength = lowerLength = 0f;
-                return;
-            }
-            Vector3 hipJoint = upper.IKWorldData.position, knee = lower.IKWorldData.position;
-            upperLength = Vector3.Distance(hipJoint, knee);
-            lowerLength = Vector3.Distance(knee, foot.IKWorldData.position);
-            hipPos = hipsPos + hipsRot * IKJob.offsetRotationHips * Vector3.Scale(isLeft ? leftHipJointRestLocal : rightHipJointRestLocal, hipsBone.lossyScale);
-        }
-        float ComputeKneeAssist(bool isLeft, Vector3 hipsPos, Vector3 footPos, Quaternion footRot, float deltaTime, out Vector3 hint)
-        {
-            bool butterflyEnabled = Basis.BasisUI.BasisSettingsDefaults.FBIKButterflyKnees.RawValue, kneeFollowsFoot = Basis.BasisUI.BasisSettingsDefaults.FBIKKneeFollowsFoot.RawValue;
-            float butterflyMaxOpenDeg = Basis.BasisUI.BasisSettingsDefaults.FBIKButterflyKneeMaxOpenDeg.RawValue, butterflySupineFloor = 1f, kneeFootCoupling = Basis.BasisUI.BasisSettingsDefaults.FBIKKneeFootFollowUpright.RawValue, kneeFwdWeight = 0f;
-            Quaternion hipsRot = frameHipsRotation;
-            Vector3 playerUpDir = framePlayerUpDirection, bendDir = hipsRot * Vector3.forward, kneeFwdHint = default;
-            LegPose(isLeft, hipsPos, hipsRot, out bool haveLeg, out Vector3 hipPos, out float upperLength, out float lowerLength);
-            ref Vector3 smoothedKneeFwdHint = ref (isLeft ? ref smoothedLeftKneeFwdHint : ref smoothedRightKneeFwdHint);
-            ref float smoothedKneeFwdWeight = ref (isLeft ? ref smoothedLeftKneeFwdWeight : ref smoothedRightKneeFwdWeight);
-            ref Vector3 smoothedButterflyHint = ref (isLeft ? ref smoothedLeftButterflyHint : ref smoothedRightButterflyHint);
-            ref float smoothedButterflyWeight = ref (isLeft ? ref smoothedLeftButterflyWeight : ref smoothedRightButterflyWeight);
-            bool haveKneeFwd = kneeFollowsFoot && TryComputeKneeForward(hipsRot, kneeFootCoupling, KneeForwardSmoothRate, playerUpDir, deltaTime, haveLeg, hipPos, upperLength, footPos, footRot, framePlayspaceRotation, ref smoothedKneeFwdHint, ref smoothedKneeFwdWeight, out kneeFwdHint, out kneeFwdWeight, out bendDir);
-            if (butterflyEnabled && TryComputeButterflyKnee(isLeft, hipsRot, playerUpDir, butterflyMaxOpenDeg, butterflySupineFloor, deltaTime, bendDir, haveLeg, hipPos, upperLength, lowerLength, footPos, footRot, framePlayspacePosition, framePlayspaceRotation, ref smoothedButterflyHint, ref smoothedButterflyWeight, out Vector3 butterflyHint, out float butterflyWeight))
-            {
-                hint = butterflyHint;
-                return butterflyWeight;
-            }
-            if (haveKneeFwd && kneeFwdWeight > 0.001f)
-            {
-                hint = kneeFwdHint;
-                return kneeFwdWeight;
-            }
-            hint = default;
-            return 0f;
         }
         void Step08FillTorsoTargets()
         {
@@ -1209,13 +1152,15 @@ namespace Basis.Scripts.Drivers
                 }
                 else
                 {
-                    float headLocalY = BasisLocalPlayer.localToWorldMatrix.inverse.MultiplyPoint3x4((Vector3)pOut[sHead]).y;
-                    data.crouchDepth = Mathf.Max(0f, (restHeadLocalY - headLocalY) * framePlayerUpScale);
+                    Matrix4x4 worldToPlayer = BasisLocalPlayer.localToWorldMatrix.inverse;
+                    float headDrop = restHeadLocalY - worldToPlayer.MultiplyPoint3x4((Vector3)pOut[sHead]).y;
+                    float eyeDrop = BasisLocalBoneDriver.EyeControl.TposeLocalScaled.position.y - worldToPlayer.MultiplyPoint3x4(BasisLocalBoneDriver.EyeControl.OutgoingWorldData.position).y;
+                    data.crouchDepth = Mathf.Max(0f, Mathf.Min(headDrop, eyeDrop) * framePlayerUpScale);
                 }
                 Vector3 chestPos = pOut[sChest];
                 Quaternion chestRot = rOut[sChest];
                 data.targetPositionChestRaw = chestPos;
-                data.targetPositionChest = ApplyHintBias(BasisBoneTrackedRole.Chest, chestPos, chestRot);
+                data.targetPositionChest = chestPos;
                 data.targetRotationChest = chestRot;
             }
             BasisLocalPlayerMarkers.IKDestBuildIKTargets.End();
@@ -1283,18 +1228,9 @@ namespace Basis.Scripts.Drivers
             {
                 float3* pOut = (float3*)posOutputs.GetUnsafeReadOnlyPtr();
                 quaternion* rOut = (quaternion*)rotOutputs.GetUnsafeReadOnlyPtr();
-                switch (data.plan.leftLeg.hint)
-                {
-                    case BasisEerieSource.Tracker: data.hintPositionLeftLowerLeg = ApplyHintBias(BasisBoneTrackedRole.LeftLowerLeg, pOut[sLeftLowerLeg], rOut[sLeftLowerLeg]); break;
-                    case BasisEerieSource.Sim: data.hintPositionLeftLowerLeg = footDriver.LeftKneeHint; break;
-                    case BasisEerieSource.Assist: data.hintPositionLeftLowerLeg = frameLeftKneeAssistHint; break;
-                }
-                switch (data.plan.rightLeg.hint)
-                {
-                    case BasisEerieSource.Tracker: data.hintPositionRightLowerLeg = ApplyHintBias(BasisBoneTrackedRole.RightLowerLeg, pOut[sRightLowerLeg], rOut[sRightLowerLeg]); break;
-                    case BasisEerieSource.Sim: data.hintPositionRightLowerLeg = footDriver.RightKneeHint; break;
-                    case BasisEerieSource.Assist: data.hintPositionRightLowerLeg = frameRightKneeAssistHint; break;
-                }
+                // Only knee trackers feed a hint. Without one the leg solve builds its own.
+                if (data.plan.leftLeg.kneeTracked) data.hintPositionLeftLowerLeg = ApplyHintBias(BasisBoneTrackedRole.LeftLowerLeg, pOut[sLeftLowerLeg], rOut[sLeftLowerLeg]);
+                if (data.plan.rightLeg.kneeTracked) data.hintPositionRightLowerLeg = ApplyHintBias(BasisBoneTrackedRole.RightLowerLeg, pOut[sRightLowerLeg], rOut[sRightLowerLeg]);
                 if (BasisLegCrouchDebug.Enabled)
                 {
                     if (BasisLocalBoneDriver.LeftUpperLegControl.HasIKWorldData && BasisLocalBoneDriver.LeftLowerLegControl.HasIKWorldData && BasisLocalBoneDriver.LeftFootControl.HasIKWorldData)
@@ -1356,8 +1292,8 @@ namespace Basis.Scripts.Drivers
             data.hintRotationRightLowerLeg = frameFacts.rightKneeRoll ? rightLowerLeg * frameRightKneeToBone : Quaternion.identity;
             Vector3 hipsRight = frameHipsRotation * Vector3.right;
             data.kneeAnteriorRef = hipsRight;
-            data.kneeBendPrefLeft = data.plan.leftLeg.trackerBendNormal ? BasisTrackerBendNormalCore.ResolveWorldNormal(leftLowerLeg, frameLeftKneeBendAxis, hipsRight) : hipsRight;
-            data.kneeBendPrefRight = data.plan.rightLeg.trackerBendNormal ? BasisTrackerBendNormalCore.ResolveWorldNormal(rightLowerLeg, frameRightKneeBendAxis, hipsRight) : hipsRight;
+            data.kneeBendPrefLeft = hipsRight;
+            data.kneeBendPrefRight = hipsRight;
             BasisLocalPlayerMarkers.IKDestBuildIKTargets.End();
         }
         void Step14FillArmTargets()
@@ -1425,28 +1361,39 @@ namespace Basis.Scripts.Drivers
         }
         public void CompleteIKSolve()
         {
-            bool solveRan = Step17JoinSolve();
+            bool solveRan = ikSolveScheduled;
+            JobHandle tail = solveRan ? ikSolveHandle : default;
+            bool scatterQueued = ikScatterPending && PoseSkeleton.TryScheduleScatter(tail, out tail);
+            bool publishQueued = ikPublishPending && CanSchedulePublish();
+            if (publishQueued)
+            {
+                tail = new BasisReadBoneWorldPoseJob { Positions = ikPublishPositions, Rotations = ikPublishRotations }.ScheduleReadOnly(ikPublishTransforms, 32, tail);
+            }
+            Step17JoinSolve(solveRan || scatterQueued || publishQueued, tail);
+            if (solveRan)
+            {
+                CaptureUnoverriddenPose();
+            }
             Step18DrainSolveGizmos(solveRan);
-            Step19ScatterPose();
+            Step19ScatterPose(scatterQueued);
             if (!ikPublishPending)
             {
                 return;
             }
             ikPublishPending = false;
-            Step20PublishWorldData();
+            Step20PublishWorldData(publishQueued);
             Step21SampleRecorders();
         }
-        bool Step17JoinSolve()
+        bool CanSchedulePublish() => ikPublishTransforms.isCreated && ikPublishControls.Length > 0 && ikPublishTransforms.length == ikPublishControls.Length;
+        void Step17JoinSolve(bool anyQueued, JobHandle tail)
         {
-            bool solveRan = ikSolveScheduled;
-            if (ikSolveScheduled)
+            if (anyQueued)
             {
                 BasisLocalPlayerMarkers.IKDestSolveJoin.Begin();
-                ikSolveHandle.Complete();
+                tail.Complete();
                 ikSolveScheduled = false;
                 BasisLocalPlayerMarkers.IKDestSolveJoin.End();
             }
-            return solveRan;
         }
         void Step18DrainSolveGizmos(bool solveRan)
         {
@@ -1461,7 +1408,7 @@ namespace Basis.Scripts.Drivers
             }
             BasisLocalPlayerMarkers.IKDestSolveGizmos.End();
         }
-        void Step19ScatterPose()
+        void Step19ScatterPose(bool scatterDone)
         {
             if (!ikScatterPending)
             {
@@ -1481,15 +1428,18 @@ namespace Basis.Scripts.Drivers
                 }
             }
             WatchdogCheckPoseStream("IKDest/PostSolve (stream, pre-scatter)");
-            BasisLocalPlayerMarkers.IKDestPoseScatter.Begin();
-            PoseSkeleton.ScatterNow();
-            BasisLocalPlayerMarkers.IKDestPoseScatter.End();
+            if (!scatterDone)
+            {
+                BasisLocalPlayerMarkers.IKDestPoseScatter.Begin();
+                PoseSkeleton.ScatterNow();
+                BasisLocalPlayerMarkers.IKDestPoseScatter.End();
+            }
             BasisFiniteWatchdog.Checkpoint("IKDest/PostPoseScatter (FBIK solve output)");
         }
-        void Step20PublishWorldData()
+        void Step20PublishWorldData(bool posesRead)
         {
             BasisLocalPlayerMarkers.IKDestPublishWorldData.Begin();
-            PublishIKWorldData();
+            PublishIKWorldData(posesRead);
             BasisLocalPlayerMarkers.IKDestPublishWorldData.End();
         }
         void Step21SampleRecorders()
@@ -1499,6 +1449,8 @@ namespace Basis.Scripts.Drivers
             {
                 BasisCalibrationDebugRecorder.RuntimeBone("head", BasisLocalBoneDriver.HeadControl.OutgoingWorldData.rotation, data.offsetRotationHead, BasisLocalAvatarDriver.Mapping.head);
                 BasisCalibrationDebugRecorder.RuntimeBone("hips", BasisLocalBoneDriver.HipsControl.OutgoingWorldData.rotation, data.offsetRotationHips, BasisLocalAvatarDriver.Mapping.Hips);
+                // What the solver was actually handed (filtered + gait-adjusted), vs the raw control above.
+                BasisCalibrationDebugRecorder.RuntimeBone("hipsSolver", data.targetRotationHips, data.offsetRotationHips, BasisLocalAvatarDriver.Mapping.Hips);
                 BasisCalibrationDebugRecorder.RuntimeBone("leftFoot", BasisLocalBoneDriver.LeftFootControl.OutgoingWorldData.rotation, data.offsetRotationLeftFoot, BasisLocalAvatarDriver.Mapping.leftFoot);
                 BasisCalibrationDebugRecorder.RuntimeBone("rightFoot", BasisLocalBoneDriver.RightFootControl.OutgoingWorldData.rotation, data.offsetRotationRightFoot, BasisLocalAvatarDriver.Mapping.rightFoot);
                 Transform animRoot = localPlayer?.BasisAvatar?.Animator != null ? localPlayer.BasisAvatar.Animator.transform : null;

@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.Network.Core;
 using Basis.Scripts.Avatar;
 using Basis.Scripts.BasisSdk.Players;
@@ -28,6 +29,7 @@ using static Basis.Scripts.Device_Management.BasisDeviceManagement;
 using static SerializableBasis;
 
 
+[NoAutoStaticsCleanup]
 public static class BasisMenuItemsEditor
 {
     [MenuItem("Basis/Avatar/Reload", false, 100)]
@@ -67,6 +69,15 @@ public static class BasisMenuItemsEditor
             Value.CreatePhysicalTrackedDevice(device.UniqueDeviceIdentifier, "{htc}vr_tracker_vive_3_0");
         }
     }
+    // Presets T-pose the avatar only to place trackers on the bones. Leave the T-pose up when an
+    // editor calibration is holding it, otherwise drop it and restore the FBIK tracker weights
+    // that PutAvatarIntoTPose disabled.
+    static void EndPresetTPose()
+    {
+        if (BasisEditorCalibrationSession.Active) return;
+        BasisLocalPlayer.Instance.LocalAvatarDriver.ResetAvatarAnimator();
+        BasisLocalPlayer.Instance.LocalRigDriver.RestoreAllTrackers();
+    }
     public static BasisSimulateXR FindSimulate()
     {
         if (BasisDeviceManagement.Instance.TryFindBasisBaseTypeManagement("SimulateXR", out List<BasisBaseTypeManagement> Matched, true))
@@ -85,10 +96,7 @@ public static class BasisMenuItemsEditor
         var Value = FindSimulate();
         Value.CreatePhysicalTrackedDevice("{htc}vr_tracker_vive_3_0" + UnityEngine.Random.Range(-9999999999999, 999999999999), "{htc}vr_tracker_vive_3_0");
         BasisDeviceManagement.VisibleTrackers(true);
-        BasisLocalPlayer.Instance.LocalAvatarDriver.ResetAvatarAnimator();
-        // PutAvatarIntoTPose disabled the FBIK tracker weights; restore them so existing
-        // controllers / the avatar pose don't stay broken until the next calibrate.
-        BasisLocalPlayer.Instance.LocalRigDriver.RestoreAllTrackers();
+        EndPresetTPose();
     }
     public static void CreateViveRightTracker()
     {
@@ -154,9 +162,7 @@ public static class BasisMenuItemsEditor
             dev.FollowMovement.SetPositionAndRotation(ModifyVector(bone.position), UnityEngine.Random.rotation);
         }
 
-        BasisLocalPlayer.Instance.LocalAvatarDriver.ResetAvatarAnimator();
-        // PutAvatarIntoTPose disabled the FBIK tracker weights; restore them.
-        BasisLocalPlayer.Instance.LocalRigDriver.RestoreAllTrackers();
+        EndPresetTPose();
         BasisDeviceManagement.VisibleTrackers(true);
     }
     public static void CreatePuck3Tracker()
@@ -182,10 +188,7 @@ public static class BasisMenuItemsEditor
         BasisHips.FollowMovement.rotation = UnityEngine.Random.rotation;
         BasisLeftFoot.FollowMovement.rotation = UnityEngine.Random.rotation;
         BasisRightFoot.FollowMovement.rotation = UnityEngine.Random.rotation;
-        BasisLocalPlayer.Instance.LocalAvatarDriver.ResetAvatarAnimator();
-        // PutAvatarIntoTPose disabled the FBIK tracker weights; restore them so existing
-        // controllers / the avatar pose don't stay broken until the next calibrate.
-        BasisLocalPlayer.Instance.LocalRigDriver.RestoreAllTrackers();
+        EndPresetTPose();
         // Show the trackers
         BasisDeviceManagement.VisibleTrackers(true);
     }
@@ -275,12 +278,20 @@ public static class BasisMenuItemsEditor
         float randomZ = UnityEngine.Random.Range(-randomRange, randomRange);
         return new Vector3(original.x + randomX, original.y + randomY, original.z + randomZ);
     }
-    [MenuItem("Basis/Calibration/Run Full Body", false, 200)]
-    public static void CalibrateEditor()
-    {
-        BasisAvatarIKStageCalibration.FullBodyCalibration();
-    }
-    [MenuItem("Basis/Calibration/Run 3 Point (random data)", false, 201)]
+    // Same flow as the in-game Calibrate button: T-pose and hold, then Confirm binds the trackers.
+    [MenuItem("Basis/Calibration/Start Full Body (T-Pose)", false, 200)]
+    public static void CalibrateEditor() => BasisEditorCalibrationSession.Start();
+    [MenuItem("Basis/Calibration/Start Full Body (T-Pose)", true)]
+    static bool CalibrateEditorValidate() => BasisEditorCalibrationSession.CanStart && !BasisEditorCalibrationSession.Active;
+    [MenuItem("Basis/Calibration/Confirm Calibration", false, 201)]
+    public static void ConfirmCalibrationEditor() => BasisEditorCalibrationSession.Confirm();
+    [MenuItem("Basis/Calibration/Confirm Calibration", true)]
+    static bool ConfirmCalibrationEditorValidate() => BasisEditorCalibrationSession.Active;
+    [MenuItem("Basis/Calibration/Cancel Calibration", false, 202)]
+    public static void CancelCalibrationEditor() => BasisEditorCalibrationSession.Cancel();
+    [MenuItem("Basis/Calibration/Cancel Calibration", true)]
+    static bool CancelCalibrationEditorValidate() => BasisEditorCalibrationSession.Active;
+    [MenuItem("Basis/Calibration/Run 3 Point (random data)", false, 203)]
     public static void ProvideRandomData()
     {
         Vector3 RotationVector = UnityEngine.Random.rotation.eulerAngles;
@@ -334,6 +345,7 @@ public static class BasisMenuItemsEditor
     // Group 1: Authentication and Player Metadata
     [Serializable]
     [ProfilerModuleMetadata("Authentication and Player Metadata Profiler")]
+    [NoAutoStaticsCleanup]
     public class AuthenticationAndPlayerMetadataProfilerModule : ProfilerModule
     {
         static readonly ProfilerCounterDescriptor[] k_Counters = new ProfilerCounterDescriptor[]
@@ -355,6 +367,7 @@ public static class BasisMenuItemsEditor
     // Group 2: Avatar Profiler
     [Serializable]
     [ProfilerModuleMetadata("Avatar Profiler")]
+    [NoAutoStaticsCleanup]
     public class AvatarProfilerModule : ProfilerModule
     {
         static readonly ProfilerCounterDescriptor[] k_Counters = new ProfilerCounterDescriptor[]
@@ -377,6 +390,7 @@ public static class BasisMenuItemsEditor
     // Group 3: Ownership Profiler
     [Serializable]
     [ProfilerModuleMetadata("Ownership Profiler")]
+    [NoAutoStaticsCleanup]
     public class OwnershipProfilerModule : ProfilerModule
     {
         static readonly ProfilerCounterDescriptor[] k_Counters = new ProfilerCounterDescriptor[]
@@ -397,6 +411,7 @@ public static class BasisMenuItemsEditor
     // Group 4: Audio and Communication
     [Serializable]
     [ProfilerModuleMetadata("Audio and Communication Profiler")]
+    [NoAutoStaticsCleanup]
     public class AudioAndCommunicationProfilerModule : ProfilerModule
     {
         static readonly ProfilerCounterDescriptor[] k_Counters = new ProfilerCounterDescriptor[]
@@ -418,6 +433,7 @@ public static class BasisMenuItemsEditor
     // Group 5: Scene and Synchronization
     [Serializable]
     [ProfilerModuleMetadata("Scene and Synchronization Profiler")]
+    [NoAutoStaticsCleanup]
     public class SceneAndSynchronizationProfilerModule : ProfilerModule
     {
         static readonly ProfilerCounterDescriptor[] k_Counters = new ProfilerCounterDescriptor[]

@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.BasisUI;
 using Basis.Scripts.Audio;
 using Basis.Scripts.BasisSdk.Helpers;
@@ -16,8 +17,9 @@ namespace Basis.Scripts.Networking.Receivers
     /// Receives, decodes, buffers, and plays remote voice audio for a networked player.
     /// Uses a single <see cref="BasisVoiceBuffer"/> for packet reordering and PCM playback.
     /// </summary>
+    [AutoStaticsCleanup]
     [Serializable]
-    public class BasisAudioReceiver
+    public partial class BasisAudioReceiver
     {
         [SerializeReference] public BasisRemoteAudioDriver BasisRemoteVisemeAudioDriver = null;
         public AudioSource audioSource;
@@ -305,7 +307,7 @@ namespace Basis.Scripts.Networking.Receivers
 #if UNITY_SERVER
             return;
 #else
-            if (HasAudioSource)
+            if (HasAudioSource && decoder != null)
             {
                 // Pass MaxFrameSize (the buffer's true capacity) as available space so a
                 // 40 ms packet still decodes during in-flight transitions where this
@@ -336,7 +338,7 @@ namespace Basis.Scripts.Networking.Receivers
 #if UNITY_SERVER
             return;
 #else
-            if (!HasAudioSource) return;
+            if (!HasAudioSource || decoder == null) return;
             try
             {
                 pcmLength = decoder.Decode(data, length, pcmBuffer, RemoteOpusSettings.MaxFrameSize, false);
@@ -410,7 +412,7 @@ namespace Basis.Scripts.Networking.Receivers
 #if UNITY_SERVER
             return;
 #else
-            if (HasAudioSource)
+            if (HasAudioSource && decoder != null)
             {
                 try
                 {
@@ -437,7 +439,7 @@ namespace Basis.Scripts.Networking.Receivers
 #if UNITY_SERVER
             return;
 #else
-            if (!HasAudioSource) return;
+            if (!HasAudioSource || decoder == null) return;
             try
             {
                 pcmLength = decoder.Decode(data, length, pcmBuffer, RemoteOpusSettings.FrameSize, true);
@@ -472,6 +474,7 @@ namespace Basis.Scripts.Networking.Receivers
         private void DrainAndDecodeLocked()
         {
             _lastDrainDecoded = false;
+            if (_idleResetDone && !_catchupActive && (!VoiceBuffer.Started || (_starveEpisode && _starvePlcBudget == 0)) && VoiceBuffer.IsIdleRelaxed) return;
 
             // Mute creates a gap that Opus's own loss handling won't catch:
             // sender stops advancing sequence numbers, so the jitter buffer never
@@ -882,31 +885,6 @@ namespace Basis.Scripts.Networking.Receivers
             }
         }
 
-        /// <summary>
-        /// Swap the AudioSource's clip for a freshly-pooled one, in-place. The
-        /// existing clip is destroyed (not pooled) so a stale-sized clip can't
-        /// re-enter circulation when the pool's <see cref="BasisAudioClipPool.ClipBufferScalar"/>
-        /// has just changed. AudioSource, transform, viseme driver, and Steam Audio
-        /// component are all preserved — only the underlying clip is replaced.
-        /// </summary>
-        public void ReloadClip()
-        {
-            if (audioSource == null || BasisNetworkReceiver == null) return;
-
-            audioSource.Stop();
-
-            AudioClip oldClip = audioSource.clip;
-            audioSource.clip = null;
-            if (oldClip != null) AudioClip.Destroy(oldClip);
-
-            audioSource.clip = BasisAudioClipPool.Get(BasisNetworkReceiver.playerId);
-            audioSource.loop = true;
-            audioSource.Play();
-            _audioPlaying = true;
-            _audioEnabled = audioSource.enabled;
-            visemeDriver.AudioSourceInactive = !_audioEnabled;
-        }
-
         public void UnloadAudioSource()
         {
             HasAudioSource = false;
@@ -968,8 +946,9 @@ namespace Basis.Scripts.Networking.Receivers
             silentData ??= new float[RemoteOpusSettings.MaxFrameSize];
             BasisNetworkReceiver = networkedPlayer;
             LogOutputRateOnce();
+            BasisResamplerKernel.EnsureInstalled();
 
-#if UNITY_IOS && !UNITY_EDITOR
+#if (UNITY_IOS || UNITY_WEBGL) && !UNITY_EDITOR
             // iOS requires statically linked Opus library
             decoder = new OpusSharp.Core.Static.OpusDecoder(RemoteOpusSettings.NetworkSampleRate, RemoteOpusSettings.Channels);
 #else
@@ -1193,16 +1172,7 @@ namespace Basis.Scripts.Networking.Receivers
                 if (_fadeEnvelope > 0f)
                 {
                     float env = _fadeEnvelope;
-                    float last = _lastOutputSample;
-                    int idx = 0;
-                    for (int f = 0; f < frames; f++)
-                    {
-                        env -= FadeRampPerSample;
-                        if (env < 0f) env = 0f;
-                        float sample = last * env;
-                        for (int c = 0; c < channels; c++)
-                            output[idx++] = sample;
-                    }
+                    unsafe { fixed (float* dst = output) BasisVoiceOutputKernel.FadeOut(dst, frames, channels, &env, _lastOutputSample, FadeRampPerSample); }
                     _fadeEnvelope = env;
                     if (env <= 0f) _lastOutputSample = 0f;
                 }
@@ -1290,7 +1260,7 @@ namespace Basis.Scripts.Networking.Receivers
         /// deliver speech already sitting near full scale.
         /// </summary>
         [MethodImpl(MethodImplOptions.AggressiveInlining)]
-        private static float SoftLimit(float x, float ceiling)
+        internal static float SoftLimit(float x, float ceiling)
         {
             float t = 0.8f * ceiling;      // linear region
             float range = ceiling - t;     // headroom to the ±ceiling asymptote
@@ -1490,7 +1460,7 @@ namespace Basis.Scripts.Networking.Receivers
         /// <see cref="_lastOutputSample"/> so a subsequent underrun callback
         /// can fade out from the last real sample instead of stepping to zero.
         /// </summary>
-        private void ApplyGainAndWrite(ReadOnlySpan<float> source, Span<float> data, int frames, int channels)
+        private unsafe void ApplyGainAndWrite(ReadOnlySpan<float> source, Span<float> data, int frames, int channels)
         {
             float shoutGain = ShoutGain;
             float targetGain = DirectionalDampeningMultiplier * SMModuleAudio.ActiveMainVolume * _perPlayerVolume * shoutGain;
@@ -1506,34 +1476,20 @@ namespace Basis.Scripts.Networking.Receivers
             float gain = _lastGain;
             float ceiling = _lastCeiling;
             float env = _fadeEnvelope;
+            if (frames > source.Length) frames = source.Length;
+            if ((long)frames * channels > data.Length) frames = data.Length / channels;
 
-            float normStart = _normalizerAmp;
-            float normEnd = StepNormalizer(source, frames);
-            float normStep = (normEnd - normStart) / Mathf.Max(1, frames);
-            float norm = normStart;
-
-            int idx = 0;
-            float lastWritten = 0f;
             float blockPeak = 0f;
             double sumSq = 0.0;
-            for (int f = 0; f < frames; f++)
+            float lastWritten = 0f;
+            float normStart = _normalizerAmp;
+            fixed (float* src = source, dst = data)
             {
-                if (env < 1f)
-                {
-                    env += FadeRampPerSample;
-                    if (env > 1f) env = 1f;
-                }
-                float raw = source[f];
-                float absRaw = raw < 0f ? -raw : raw;
-                if (absRaw > blockPeak) blockPeak = absRaw;
-                sumSq += (double)raw * raw;
-                float sample = SoftLimit(raw * norm * gain * env, ceiling);
-                for (int c = 0; c < channels; c++)
-                    data[idx++] = sample;
-                lastWritten = sample;
-                gain += gainStep;
-                ceiling += ceilingStep;
-                norm += normStep;
+                BasisVoiceOutputKernel.Stats(src, frames, &sumSq, &blockPeak);
+                float normEnd = StepNormalizer(sumSq, blockPeak, frames);
+                float normStep = (normEnd - normStart) / Mathf.Max(1, frames);
+                BasisVoiceOutputKernel.GainWrite(src, dst, frames, channels, gain, gainStep, ceiling, ceilingStep, normStart, normStep, &env, FadeRampPerSample, &lastWritten);
+                _normalizerAmp = normEnd;
             }
 
             // Peak meter: instant attack to this callback's loudest sample, otherwise
@@ -1549,7 +1505,6 @@ namespace Basis.Scripts.Networking.Receivers
 
             _lastGain = targetGain;
             _lastCeiling = targetCeiling;
-            _normalizerAmp = normEnd;
             _fadeEnvelope = env;
             _lastOutputSample = lastWritten;
         }
@@ -1560,7 +1515,7 @@ namespace Basis.Scripts.Networking.Receivers
         /// volume and distance dampening, so the estimate tracks how loud the talker
         /// actually is rather than how loud they are to you right now.
         /// </summary>
-        private float StepNormalizer(ReadOnlySpan<float> source, int frames)
+        private float StepNormalizer(double sumSq, float peak, int frames)
         {
             if (_normalizerResetRequested)
             {
@@ -1572,16 +1527,6 @@ namespace Basis.Scripts.Networking.Receivers
             if (!_normalizeLoudness || frames <= 0)
             {
                 return 1f;
-            }
-
-            double sumSq = 0.0;
-            float peak = 0f;
-            for (int f = 0; f < frames; f++)
-            {
-                float v = source[f];
-                sumSq += (double)v * v;
-                float magnitude = v < 0f ? -v : v;
-                if (magnitude > peak) peak = magnitude;
             }
 
             float frameRms = Mathf.Sqrt((float)(sumSq / frames));

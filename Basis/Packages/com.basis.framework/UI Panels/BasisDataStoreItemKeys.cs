@@ -1,4 +1,5 @@
-﻿using System.Collections.Generic;
+﻿using Unity.Scripting.LifecycleManagement;
+using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using System.Threading.Tasks;
@@ -10,7 +11,8 @@ namespace Basis.Scripts.UI.UI_Panels
     /// Separate keystore for ITEMS (so items don't collide with avatar keys).
     /// Writes to: Application.persistentDataPath/ItemKeyStore.json
     /// </summary>
-    public static class BasisDataStoreItemKeys
+    [AutoStaticsCleanup]
+    public static partial class BasisDataStoreItemKeys
     {
         [System.Serializable]
         public struct PinnedSettings
@@ -107,10 +109,14 @@ namespace Basis.Scripts.UI.UI_Panels
         // FIX: Track whether LoadKeys has been called so mutation methods can guard
         // against overwriting disk state with an empty in-memory array.
         private static bool _loaded = false;
+        private static bool _readOnly = false;
+        public static bool IsReadOnly => _readOnly;
+        private const int ReadAttempts = 3;
+        private const int ReadRetryMilliseconds = 100;
 
         // FIX: SemaphoreSlim(1,1) prevents concurrent async mutations from corrupting
         // the shared keys array or causing lost updates between read and SaveKeysToFile.
-        private static readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
+        [NoAutoStaticsCleanup] private static readonly SemaphoreSlim _lock = new SemaphoreSlim(1, 1);
 
         public static async Task AddNewKey(ItemKey newKey)
         {
@@ -130,6 +136,36 @@ namespace Basis.Scripts.UI.UI_Panels
                     await SaveKeysToFile();
                     BasisDebug.Log($"Item key added: {newKey.Url}");
                 }
+            }
+            finally
+            {
+                _lock.Release();
+            }
+        }
+
+        public static async Task<int> AddNewKeys(IReadOnlyList<ItemKey> newKeys)
+        {
+            await EnsureLoaded();
+
+            await _lock.WaitAsync();
+            try
+            {
+                int added = 0;
+                for (int i = 0; i < newKeys.Count; i++)
+                {
+                    ItemKey newKey = newKeys[i];
+                    if (newKey == null || ContainsKey(newKey)) continue;
+                    int oldLen = keys.Data.Length;
+                    System.Array.Resize(ref keys.Data, oldLen + 1);
+                    keys.Data[oldLen] = newKey;
+                    added++;
+                }
+                if (added > 0)
+                {
+                    await SaveKeysToFile();
+                    BasisDebug.Log($"Item keys added: {added}");
+                }
+                return added;
             }
             finally
             {
@@ -240,7 +276,52 @@ namespace Basis.Scripts.UI.UI_Panels
             BasisDebug.LogWarning("Creating new json. old was bogo binted.");
             keys.Data = System.Array.Empty<ItemKey>();
             ValidateEmbeddedKeys(); // ensures hardcoded embedded stuff is there
-            await SaveKeysToFile(); // overwrite the empty file with a valid one 
+            await SaveKeysToFile(); // overwrite the empty file with a valid one
+        }
+
+        public static async Task<byte[]> ReadWithRetry(string path)
+        {
+            for (int attempt = 1; ; attempt++)
+            {
+                try
+                {
+                    return await BasisFiles.ReadAllBytesAsync(path);
+                }
+                catch (IOException) when (attempt < ReadAttempts)
+                {
+                    await BasisTasks.Delay(ReadRetryMilliseconds);
+                }
+            }
+        }
+
+        public static string UnreadableCopyPath(string path) => path + ".corrupt_" + System.DateTime.UtcNow.ToString("yyyyMMddHHmmssfff");
+
+        private static async Task LoadWithoutSaving()
+        {
+            _readOnly = true;
+            if (!await TryLoadFromBackup(false))
+            {
+                keys.Data = System.Array.Empty<ItemKey>();
+                ValidateEmbeddedKeys();
+            }
+        }
+
+        private static async Task RecoverFromBadFile()
+        {
+            try
+            {
+                File.Copy(FilePath, UnreadableCopyPath(FilePath), false);
+            }
+            catch (System.Exception e)
+            {
+                BasisDebug.LogError($"Could not keep a copy of the unreadable Item key file, nothing will be saved this session: {e.Message}");
+                await LoadWithoutSaving();
+                return;
+            }
+            if (!await TryLoadFromBackup(true))
+            {
+                await WipeMemoryKeys_ValidateEmbedded_AndSave();
+            }
         }
 
         // FIX: Core load logic extracted so it can be called from EnsureLoaded without
@@ -248,11 +329,12 @@ namespace Basis.Scripts.UI.UI_Panels
         private static async Task LoadKeysInternal()
         {
             EnsureInit();
+            _readOnly = false;
 
             if (!File.Exists(FilePath))
             {
                 BasisDebug.Log("No Item key file found. Starting fresh.");
-                if (!await TryLoadFromBackup())
+                if (!await TryLoadFromBackup(true))
                 {
                     await WipeMemoryKeys_ValidateEmbedded_AndSave();
                 }
@@ -262,16 +344,12 @@ namespace Basis.Scripts.UI.UI_Panels
             byte[] byteData;
             try
             {
-                byteData = await File.ReadAllBytesAsync(FilePath);
+                byteData = await ReadWithRetry(FilePath);
             }
             catch (System.Exception e)
             {
-                BasisDebug.LogError($"Failed to read Item key file: {e.Message}");
-                //keys = new ItemKeys { Data = System.Array.Empty<ItemKey>() };
-                if (!await TryLoadFromBackup())
-                {
-                    await WipeMemoryKeys_ValidateEmbedded_AndSave();
-                }
+                BasisDebug.LogError($"Failed to read Item key file, nothing will be saved this session: {e.Message}");
+                await LoadWithoutSaving();
                 return;
             }
 
@@ -281,11 +359,7 @@ namespace Basis.Scripts.UI.UI_Panels
             if (byteData == null || byteData.Length == 0)
             {
                 BasisDebug.LogWarning("Item key file exists but is empty. Starting fresh.");
-                //keys = new ItemKeys { Data = System.Array.Empty<ItemKey>() };
-                if (!await TryLoadFromBackup())
-                {
-                    await WipeMemoryKeys_ValidateEmbedded_AndSave();
-                }
+                await RecoverFromBadFile();
                 return;
             }
 
@@ -298,21 +372,12 @@ namespace Basis.Scripts.UI.UI_Panels
                 // FIX: Explicit null check after deserialization. If the JSON is present
                 // but malformed or schema-mismatched, the deserializer may return null
                 // instead of throwing. Without this check we'd silently use a null ref.
-                if (loaded == null)
+                if (loaded?.Data == null)
                 {
                     BasisDebug.LogWarning("Item key file deserialized to null (malformed JSON?). Starting fresh.");
-                    //keys = new ItemKeys { Data = System.Array.Empty<ItemKey>() };
-                    if (!await TryLoadFromBackup())
-                    {
-                        await WipeMemoryKeys_ValidateEmbedded_AndSave();
-                    }
+                    await RecoverFromBadFile();
                     return;
                 }
-
-                // FIX: Guard missing Data array separately from a missing root object.
-                // A valid JSON object with no "Data" field deserializes fine but leaves
-                // Data null, which would crash every downstream caller.
-                loaded.Data ??= System.Array.Empty<ItemKey>();
 
                 // FIX: Scrub any null entries inside the array that could have been
                 // written by a previous bug or a hand-edited file.
@@ -339,15 +404,11 @@ namespace Basis.Scripts.UI.UI_Panels
                 // FIX: Log the full exception (not just Message) so stack traces are
                 // visible. The old code swallowed the type and location of the error.
                 BasisDebug.LogError($"Failed to deserialize Item keys: {e}");
-                //keys = new ItemKeys { Data = System.Array.Empty<ItemKey>() };
-                if (!await TryLoadFromBackup())
-                {
-                    await WipeMemoryKeys_ValidateEmbedded_AndSave();
-                }
+                await RecoverFromBadFile();
             }
         }
 
-        private static async Task<bool> TryLoadFromBackup()
+        private static async Task<bool> TryLoadFromBackup(bool save)
         {
             string backupPath = FilePath + ".bak";
             if (!File.Exists(backupPath))
@@ -355,7 +416,7 @@ namespace Basis.Scripts.UI.UI_Panels
 
             try
             {
-                byte[] backupData = await File.ReadAllBytesAsync(backupPath);
+                byte[] backupData = await ReadWithRetry(backupPath);
                 if (backupData == null || backupData.Length == 0)
                     return false;
 
@@ -373,7 +434,7 @@ namespace Basis.Scripts.UI.UI_Panels
 
                 keys = restored;
                 ValidateEmbeddedKeys();
-                await SaveKeysToFile();
+                if (save) await SaveKeysToFile();
                 BasisDebug.LogWarning("Item key file was unreadable; restored from backup. Count: " + keys.Data.Length);
                 return true;
             }
@@ -387,6 +448,11 @@ namespace Basis.Scripts.UI.UI_Panels
         private static async Task SaveKeysToFile()
         {
             EnsureInit();
+            if (_readOnly)
+            {
+                BasisDebug.LogError("Item key file could not be read at launch, so this change was not saved. Restart to reload it.");
+                return;
+            }
 
             // FIX: Write to a temp file first, then replace the real file atomically.
             // A crash or power loss mid-write previously produced a corrupt keystore
@@ -420,7 +486,7 @@ namespace Basis.Scripts.UI.UI_Panels
             // File.Move on a non-existent tmp file, causing a FileNotFoundException.
             try
             {
-                await File.WriteAllBytesAsync(tempPath, byteData);
+                await BasisFiles.WriteAllBytesAsync(tempPath, byteData);
             }
             catch (System.Exception e)
             {
@@ -466,7 +532,7 @@ namespace Basis.Scripts.UI.UI_Panels
 
         // FIX: EnsureLoaded guarantees disk state is in memory before any mutation.
         // Uses double-check pattern: fast path avoids lock overhead after first load.
-        private static async Task EnsureLoaded()
+        public static async Task EnsureLoaded()
         {
             if (_loaded) return;
 

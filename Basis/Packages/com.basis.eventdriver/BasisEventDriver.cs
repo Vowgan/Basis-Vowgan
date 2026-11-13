@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.BTween;
 using Basis.Scripts.BasisSdk.Interactions;
 using Basis.Scripts.BasisSdk.Players;
@@ -14,7 +15,9 @@ using Basis.Scripts.UI;
 using Basis.Scripts.UI.NamePlate;
 using GatorDragonGames.JigglePhysics;
 using HVR.Basis.Comms;
+#if STEAMAUDIO_ENABLED && !UNITY_WEBGL
 using SteamAudio;
+#endif
 using System;
 using System.Collections.Generic;
 using Unity.Jobs;
@@ -28,6 +31,7 @@ namespace Basis.EventDriver
     /// Central per-frame driver that coordinates device actions, networking compute/apply,
     /// physics scheduling for JigglePhysics, and various local simulation hooks.
     /// </summary>
+    [AutoStaticsCleanup]
     [DefaultExecutionOrder(-31950)]
     public partial class BasisEventDriver : MonoBehaviour
     {
@@ -199,6 +203,7 @@ namespace Basis.EventDriver
             {
                 Application.onBeforeRender -= OnBeforeRender;
             }
+            BasisSceneFactory.DeInitialize();
         }
         /// <summary>
         /// Unity update loop. Drains main-thread actions, advances network simulation (compute),
@@ -214,7 +219,7 @@ namespace Basis.EventDriver
         {
             using var updateScope = Prof.Update.Auto();
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || UNITY_INCLUDE_INSTRUMENTATION
             BasisFiniteWatchdog.Checkpoint("UpdateStart (render / physics / previous frame tail)");
             BasisFiniteWatchdog.CheckpointRemote("UpdateStart (render / physics / previous frame tail)");
 #endif
@@ -260,6 +265,10 @@ namespace Basis.EventDriver
                     // adds later, so starting early costs the remote players nothing.
                     BasisOpenLipSyncContext.ProcessAllPending();
                 }
+            }
+            using (Prof.NetworkTransportTick.Auto())
+            {
+                BasisNetworkManagement.TickTransports();
             }
             // Drain everything that arrived from worker threads
             using (Prof.MainThreadActions.Auto())
@@ -353,9 +362,13 @@ namespace Basis.EventDriver
             {
                 InvokeEventCallbacks(OnUpdate, nameof(OnUpdate), ref _onUpdateCachedDelegate, ref _onUpdateInvocationList);
             }
+            using (Prof.ContentSphereSchedule.Auto())
+            {
+                BasisContentSphereBillboardDriver.ScheduleBob(DeltaTime);
+            }
             timeSinceLastUpdate += DeltaTime;
 
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || UNITY_INCLUDE_INSTRUMENTATION
             BasisFiniteWatchdog.Checkpoint("UpdateTail (pre-animator)");
             BasisFiniteWatchdog.CheckpointRemote("UpdateTail (pre-animator)");
 #endif
@@ -376,6 +389,8 @@ namespace Basis.EventDriver
 
             fixedDeltaTime = Time.fixedDeltaTime;
             fixedTimeAsDouble = Time.fixedTimeAsDouble;
+            try { BasisPickupJointInteractable.OnFixedSimulate?.Invoke(fixedTimeAsDouble); }
+            catch (Exception ex) { BasisDebug.LogErrorOnce($"OnFixedSimulate failed: {ex}", BasisDebug.LogTag.Event); }
             if (BasisLocalPlayer.PlayerReady)
             {
                 using (Prof.SceneFactorySimulate.Auto())
@@ -576,27 +591,28 @@ namespace Basis.EventDriver
             ProfileEnd(PROF_LOCAL_PLAYER);
             BasisFiniteWatchdog.Checkpoint("PostLocalPlayerSimulate (FBIK solve in flight)");
 
-            // Blink and viseme write local blendshape weights only — no pose reads, no jobs — so
-            // they run inside the solve window as overlap rather than ahead of Simulate. They stay
-            // ahead of the head blendshape read scheduled further down.
+            using (Prof.RemoteBoneComplete.Auto())
+            {
+                BasisNetworkManagement.CompleteRemoteBoneJobSystemJobs();
+            }
+            BasisFiniteWatchdog.CheckpointRemote("PostRemoteBoneJobs (skeleton / hips / mouth / nameplate write)");
+
+            // Blink, idle expression and viseme write local blendshape weights only. They sit after the
+            // remote bone join because idle expression reads remote mouth positions that job writes,
+            // and they stay ahead of the head blendshape read scheduled further down.
             if (BasisLocalPlayer.PlayerReady)
             {
                 BasisLocalPlayer localplayer = BasisLocalPlayer.Instance;
                 using (Prof.FacialBlink.Auto())
                 {
                     localplayer.FacialBlinkDriver.Simulate(TimeAsDouble);
+                    localplayer.IdleExpressionDriver.Simulate(TimeAsDouble, DeltaTime, localplayer.FaceIsVisible, localplayer.LocalVisemeDriver.VoiceLevel01);
                 }
                 using (Prof.VisemeApply.Auto())
                 {
                     localplayer.LocalVisemeDriver.Apply(DeltaTime);
                 }
             }
-
-            using (Prof.RemoteBoneComplete.Auto())
-            {
-                BasisNetworkManagement.CompleteRemoteBoneJobSystemJobs();
-            }
-            BasisFiniteWatchdog.CheckpointRemote("PostRemoteBoneJobs (skeleton / hips / mouth / nameplate write)");
 
             // The beacon reads a remote MouthTransform's world position on the main thread, so it
             // has to sit in the one window where that hierarchy carries no in-flight job: the mouth
@@ -656,6 +672,7 @@ namespace Basis.EventDriver
             using (Prof.RemoteFaceSimulate.Auto())
             {
                 BasisRemoteFaceManagement.Simulate(TimeAsDouble, DeltaTime);
+                BasisIdleExpressionDriver.SimulateRemotes(TimeAsDouble, DeltaTime);
             }
             ProfileEnd(PROF_REMOTE_FACE_SIMULATE);
 
@@ -724,7 +741,7 @@ namespace Basis.EventDriver
                 catch (Exception ex) { BasisDebug.LogErrorOnce($"ScheduleTransmitJobs failed: {ex}", BasisDebug.LogTag.Event); }
             }
 
-#if STEAMAUDIO_ENABLED
+#if STEAMAUDIO_ENABLED && !UNITY_WEBGL
             // Stays after the local eye apply: the listener/source gather TAA can share the local
             // player hierarchy with the eye-write job, and the two have never been in flight
             // together — the gather also wants the final camera-side poses for this frame.
@@ -939,7 +956,7 @@ namespace Basis.EventDriver
             ProfileEnd(PROF_NAMEPLATE_COMPLETE);
             BasisFiniteWatchdog.CheckpointRemote("PostNamePlates");
 
-#if STEAMAUDIO_ENABLED
+#if STEAMAUDIO_ENABLED && !UNITY_WEBGL
             // ── SteamAudio apply ──
             // After the jiggle pose schedule, not in OnBeforeRender: its reap/push/snapshot
             // main-thread cost overlaps the in-flight pose jobs. Nothing it reads is fresher
@@ -949,6 +966,10 @@ namespace Basis.EventDriver
             {
                 SteamAudioManager.Apply();
             }
+#endif
+#if UNITY_WEBGL && !UNITY_EDITOR
+            Basis.Scripts.Platform.BasisWebVoiceOutput.Tick(unscaledDeltaTime);
+            if (Basis.Scripts.Platform.BasisWebAddressables.IsReady) BasisOpenLipSyncDriver.WebTick(Basis.Scripts.Platform.BasisWebVoiceOutput.SampleRate, unscaledDeltaTime);
 #endif
 
             using (Prof.ContentSphereComplete.Auto())

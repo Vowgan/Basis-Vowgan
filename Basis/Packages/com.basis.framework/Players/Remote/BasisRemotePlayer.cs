@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.Scripts.Addressable_Driver.Resource;
 using Basis.Scripts.Avatar;
 using Basis.Scripts.Drivers;
@@ -25,7 +26,8 @@ namespace Basis.Scripts.BasisSdk.Players
     /// explicit: the disconnect path calls <see cref="OnDestroy"/> to release the nameplate and
     /// mouth (the avatar is unloaded separately by the avatar factory).
     /// </remarks>
-    public class BasisRemotePlayer : IBasisPlayer
+    [AutoStaticsCleanup]
+    public partial class BasisRemotePlayer : IBasisPlayer
     {
         #region IBasisPlayer shared state
 
@@ -213,6 +215,7 @@ namespace Basis.Scripts.BasisSdk.Players
         /// Network Face Driver that provides eye and blink support
         /// </summary>
         public BasisRemoteFaceDriver RemoteFaceDriver = new BasisRemoteFaceDriver();
+        [NonSerialized] public BasisIdleExpressionDriver IdleExpressionDriver = new BasisIdleExpressionDriver();
         #endregion
 
         #region UI / Name Plate
@@ -227,6 +230,8 @@ namespace Basis.Scripts.BasisSdk.Players
         /// Fired to display a chat message for this player. Empty string clears the message.
         /// </summary>
         public Action<string> OnChatMessageReceived;
+
+        public readonly BasisChatHistory ChatHistory = new BasisChatHistory();
 
         /// <summary>
         /// Fired when this player's transient chat typing state changes.
@@ -939,6 +944,7 @@ namespace Basis.Scripts.BasisSdk.Players
             {
                 RemoteFaceDriver.OnDestroy();
             }
+            IdleExpressionDriver?.Clear();
 
             // Nothing dropped this before, so every disconnect leaked whatever the grid held —
             // a 207 KB Persistent NativeArray per player back when each one allocated its own.

@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using System;
 using System.Runtime.CompilerServices;
 using System.Threading;
@@ -68,6 +69,28 @@ namespace Basis.Scripts.Networking.NetworkedAvatar
         /// </summary>
         [System.NonSerialized] public int FingerExpansionGeneration;
 
+        /// <summary>
+        /// Wire bytes of a streaming pose waiting to be unpacked into this buffer by the receiver's
+        /// compute pass (see <see cref="SetRawPayload"/>). Kept across pool round trips so the copy
+        /// stops allocating once every pooled buffer has seen the largest payload size.
+        /// </summary>
+        [System.NonSerialized] internal byte[] RawPayload;
+        [System.NonSerialized] internal int RawLength;
+        [System.NonSerialized] internal byte RawQuality;
+
+        /// <summary>Stages <paramref name="length"/> wire bytes for a deferred decode.</summary>
+        internal void SetRawPayload(byte[] source, int length, byte quality, double secondsInterval)
+        {
+            if (RawPayload == null || RawPayload.Length < length)
+            {
+                RawPayload = new byte[length];
+            }
+            Buffer.BlockCopy(source, 0, RawPayload, 0, length);
+            RawLength = length;
+            RawQuality = quality;
+            SecondsInterval = secondsInterval;
+        }
+
         public bool IsDisposed = false;
 
         // Pool internals (intrusive lock-free stack)
@@ -115,6 +138,7 @@ namespace Basis.Scripts.Networking.NetworkedAvatar
             SecondsInterval = 0.01;
             EffectorMask = 0;
             FingerExpansionGeneration = 0;
+            RawLength = 0;
         }
 
         public void Dispose()
@@ -151,6 +175,7 @@ namespace Basis.Scripts.Networking.NetworkedAvatar
     ///   one buffer to two receivers, orphans the rest of the free list, and lets Deinitialize
     ///   Dispose() the persistent NativeArrays of a buffer a Burst job still reads.
     /// </summary>
+    [NoAutoStaticsCleanup]
     public static class BasisAvatarBufferPool
     {
         // Intrusive stack head; only ever read or written under _gate.

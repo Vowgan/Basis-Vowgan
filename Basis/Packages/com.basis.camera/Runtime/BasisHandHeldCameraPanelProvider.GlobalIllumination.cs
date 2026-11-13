@@ -21,7 +21,7 @@ namespace Basis.BasisUI.HandHeldCamera
     /// </summary>
     public partial class BasisHandHeldCameraPanelProvider
     {
-#if BASIS_HAS_GI && !UNITY_ANDROID
+#if BASIS_HAS_GI && !UNITY_ANDROID && !UNITY_WEBGL
         private PanelSectionToggle _giSection;
         private PanelElementDescriptor _giGroup;
         private PanelToggle _giOverrideToggle;
@@ -71,7 +71,7 @@ namespace Basis.BasisUI.HandHeldCamera
             _giModeDropdown.Descriptor.SetTooltip(BasisLocalization.Get("settings.graphics.gi.mode.tooltip"));
             _giModeDropdown.AssignLocalizedEntries(
                 new List<string>(SMModuleGlobalIlluminationURP.ModeOptions),
-                new List<string> { "settings.graphics.gi.mode.screenSpace", "settings.graphics.gi.mode.rayTraced" });
+                new List<string> { "settings.graphics.gi.mode.radianceCascades", "settings.graphics.gi.mode.rayTraced" });
             _giModeDropdown.OnValueChanged = _ =>
             {
                 if (_activeCamera == null || _giModeDropdown == null) return;
@@ -252,7 +252,7 @@ namespace Basis.BasisUI.HandHeldCamera
         {
             if (_activeCamera == null) return;
 
-            bool giSupported = BasisSettingsDefaults.UseGlobalIllumination.RawValue;
+            bool giSupported = Basis.Scripts.Rendering.BasisLightingSolutions.BasisGlobalIllumination;
             _giOverrideToggle?.SetInteractable(giSupported, giSupported ? null : BasisLocalization.Get("camera.gi.override.disabled"));
             _giOverrideToggle?.SetValueWithoutNotify(_activeCamera.OverrideGlobalIllumination);
 

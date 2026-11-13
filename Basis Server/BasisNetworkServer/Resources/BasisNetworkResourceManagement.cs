@@ -16,7 +16,7 @@ public static class BasisNetworkResourceManagement
     // re-derives it from the database at the cap boundary so a missed decrement can never permanently
     // block a legitimate creator.
     private static readonly ConcurrentDictionary<string, int> PerCreatorCount = new ConcurrentDictionary<string, int>();
-    private const int DefaultMaxLoadedResourcesPerPlayer = 16384;
+    private const int DefaultMaxLoadedResourcesPerPlayer = Configuration.DefaultMaxLoadedResourcesPerPlayer;
 
     private static int ResolveMaxLoadedPerPlayer()
     {
@@ -170,6 +170,7 @@ public static class BasisNetworkResourceManagement
 
                 LLR.Serialize(Writer);
                 NetworkServer.TrySend(NewConnection, Writer, BasisNetworkCommons.LoadResourceChannel, DeliveryMethod.ReliableOrdered);
+                BasisNetworkResourceDisk.SendStateToPeer(NewConnection, LLR);
             }
             NetworkServer.ReturnWriter(Writer);
         }
@@ -204,13 +205,13 @@ public static class BasisNetworkResourceManagement
             }
             else
             {
-                BNL.LogError("Try Add Failed Already have Object Loaded With " + LocalLoadResource.LoadedNetID);
+                BNLThrottle.LogError("resources.208", "Try Add Failed Already have Object Loaded With " + LocalLoadResource.LoadedNetID);
             }
             NetworkServer.ReturnWriter(Writer);
         }
         else
         {
-            BNL.LogError("Already have Object Loaded With " + LocalLoadResource.LoadedNetID);
+            BNLThrottle.LogError("resources.214", "Already have Object Loaded With " + LocalLoadResource.LoadedNetID);
         }
     }
     // Server-authoritative path — skips IsAdminLocked peer check because the caller
@@ -224,6 +225,7 @@ public static class BasisNetworkResourceManagement
             return false;
         }
         NoteResourceRemoved(removedResource.UUIDOfCreator);
+        BasisNetworkResourceDisk.OnUnloaded(unLoadResource.LoadedNetID);
 
         NetDataWriter writer = NetworkServer.RentWriter();
         unLoadResource.Serialize(writer);
@@ -247,16 +249,14 @@ public static class BasisNetworkResourceManagement
             return;
         }
 
-        // Creator-or-moderator, same rule SetStatic applies. The unload permission node is in the
-        // default group, so without this any player can delete every other player's props.
         bool hasUnloadRequesterUuid = NetworkServer.AuthIdentity.NetIDToUUID(peer, out string unloadRequesterUuid);
         bool isModeratorUnload = hasUnloadRequesterUuid && PermissionIntegration.HasValidRequirement(unloadRequesterUuid, PermNodes.protection);
         bool isCreatorUnload = hasUnloadRequesterUuid
             && !string.IsNullOrEmpty(resource.UUIDOfCreator)
             && unloadRequesterUuid == resource.UUIDOfCreator;
-        if (!isCreatorUnload && !isModeratorUnload)
+        if (BasisNetworkServer.Security.BasisGlobalLockManager.ContentRemovalLocked && !isCreatorUnload && !isModeratorUnload)
         {
-            BNL.LogError($"Peer {peer.Id} tried to unload [{unLoadResource.LoadedNetID}] they did not create.");
+            BNL.LogWarning($"Peer {peer.Id} tried to unload [{unLoadResource.LoadedNetID}] they did not create while content removal is locked.");
             return;
         }
 
@@ -267,6 +267,7 @@ public static class BasisNetworkResourceManagement
             return;
         }
         NoteResourceRemoved(resource.UUIDOfCreator);
+        BasisNetworkResourceDisk.OnUnloaded(unLoadResource.LoadedNetID);
 
         NetDataWriter writer = NetworkServer.RentWriter();
         unLoadResource.Serialize(writer);
@@ -325,6 +326,7 @@ public static class BasisNetworkResourceManagement
         resource.Static = targetStatic;
         resource.StaticAdminLocked = targetAdminLocked;
         UshortNetworkDatabase[modifyResource.LoadedNetID] = resource;
+        BasisNetworkResourceDisk.Resave(modifyResource.LoadedNetID);
 
         // Normalize the broadcast so every client agrees on the resolved state + routing.
         modifyResource.Static = targetStatic;

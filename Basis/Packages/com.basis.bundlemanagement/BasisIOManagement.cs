@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using System;
 using System.IO;
 using System.Threading;
@@ -5,7 +6,8 @@ using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.Networking;
 
-public static class BasisIOManagement
+[AutoStaticsCleanup]
+public static partial class BasisIOManagement
 {
     public static string PersistentDataPath { get; private set; }
     public static RuntimePlatform CachedPlatform { get; private set; }
@@ -77,6 +79,7 @@ public static class BasisIOManagement
             nameof(RuntimePlatform.OSXPlayer) => "StandaloneOSX",
             nameof(RuntimePlatform.Android) => "Android",
             nameof(RuntimePlatform.IPhonePlayer) => "iOS",
+            nameof(RuntimePlatform.WebGLPlayer) => "WebGL",
             _ => normalized,
         };
     }
@@ -242,7 +245,7 @@ public static class BasisIOManagement
     public static async Task<BeeResult<BeeDownloadResult>> DownloadBEEEx(string url, string vp, BasisProgressReport progressCallback, CancellationToken cancellationToken = default, long MaxDownloadSizeInMB = 4L * 1024 * 1024 * 1024)
     {
         // Validate inputs with actionable messages
-        if (!ValidateUrl(url, out url, out var urlErr))
+        if (!ValidateBeeSourceUrl(url, out url, out var urlErr))
             return BeeResult<BeeDownloadResult>.Fail($"DownloadBEEEx: {urlErr}");
 
         if (string.IsNullOrWhiteSpace(vp))
@@ -410,7 +413,7 @@ public static class BasisIOManagement
     /// </summary>
     public static async Task<BeeResult<(BasisBundleConnector, string, string)>> DownloadConnectorOnlyEx(string url, string vp, BasisProgressReport progressCallback, CancellationToken cancellationToken = default, long MaxDownloadSizeInMB = 4L * 1024 * 1024 * 1024)
     {
-        if (!ValidateUrl(url, out url, out var urlErr))
+        if (!ValidateBeeSourceUrl(url, out url, out var urlErr))
             return BeeResult<(BasisBundleConnector, string, string)>.Fail($"DownloadConnectorOnlyEx: {urlErr}");
 
         if (string.IsNullOrWhiteSpace(vp))
@@ -497,7 +500,7 @@ public static class BasisIOManagement
             return BeeResult<BeeReadResult>.Fail("ReadBEEFileEx: VP is null or empty.");
         }
 
-        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 96 * 1024, useAsync: true);
+        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 96 * 1024, useAsync: BasisTasks.ThreadsAvailable);
 
         if (fs.Length < BasisBeeConstants.DiskHeaderSize)
         {
@@ -568,7 +571,7 @@ public static class BasisIOManagement
         if (string.IsNullOrWhiteSpace(vp))
             return BeeResult<BeeReadResult>.Fail("ReadBEEFileEx: VP is null or empty.");
 
-        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 96 * 1024, useAsync: true);
+        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 96 * 1024, useAsync: BasisTasks.ThreadsAvailable);
 
         if (fs.Length < BasisBeeConstants.DiskHeaderSize)
             return BeeResult<BeeReadResult>.Fail($"ReadBEEFileEx: File too small to contain header. Size={fs.Length} bytes.");
@@ -613,7 +616,7 @@ public static class BasisIOManagement
         if (string.IsNullOrWhiteSpace(vp))
             return BeeResult<BeeReadResult>.Fail("ReadRemoteBeeFromDiskEx: VP is null or empty.");
 
-        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 96 * 1024, useAsync: true);
+        using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read, bufferSize: 96 * 1024, useAsync: BasisTasks.ThreadsAvailable);
 
         if (fs.Length < BasisBeeConstants.RemoteHeaderSize)
             return BeeResult<BeeReadResult>.Fail($"ReadRemoteBeeFromDiskEx: File too small to contain remote header. Size={fs.Length} bytes.");
@@ -760,8 +763,41 @@ public static class BasisIOManagement
     /// <param name="ct"></param>
     /// <param name="MaxDownloadSizeInMB">Defaults to 4GB</param>
     /// <returns></returns>
+    private static async Task<BeeResult<DownloadPayload>> DownloadHostedRangeInternal(string id, long startByte, long? endByteInclusive, string toFilePath, BasisProgressReport progress, CancellationToken ct, long maxBytes)
+    {
+        if (!string.IsNullOrEmpty(toFilePath))
+            return BeeResult<DownloadPayload>.Fail("Server hosted content cannot be streamed to a file.");
+        if (startByte < 0 || !endByteInclusive.HasValue || endByteInclusive.Value < startByte)
+            return BeeResult<DownloadPayload>.Fail($"Invalid byte range: {startByte}-{endByteInclusive}");
+        long expectedBytes = endByteInclusive.Value - startByte + 1;
+        if (expectedBytes > maxBytes || expectedBytes > int.MaxValue)
+            return BeeResult<DownloadPayload>.Fail($"Refusing download: requested {expectedBytes} bytes exceeds limit {Math.Min(maxBytes, int.MaxValue)}.");
+        BasisServerHostedBee.RangeFetcher fetcher = BasisServerHostedBee.Fetcher;
+        if (fetcher == null)
+            return BeeResult<DownloadPayload>.Fail("This avatar is shared through a server you are not connected to.");
+        string requestId = BasisGenerateUniqueID.GenerateUniqueID();
+        (byte[] data, string error) = await fetcher(id, startByte, (int)expectedBytes, p => progress?.ReportProgress(requestId, p, "Downloading data..."), ct);
+        progress?.ReportProgress(requestId, 100, "Downloading Complete");
+        if (data == null)
+            return BeeResult<DownloadPayload>.Fail(error ?? "Server hosted download failed.");
+        if (data.LongLength != expectedBytes)
+            return BeeResult<DownloadPayload>.Fail($"Expected {expectedBytes} bytes from the server, got {data.LongLength}.");
+        return BeeResult<DownloadPayload>.Ok(new DownloadPayload { Data = data });
+    }
+    private static bool ValidateBeeSourceUrl(string url, out string normalizedUrl, out string error)
+    {
+        if (BasisServerHostedBee.TryParse(url, out string id))
+        {
+            normalizedUrl = BasisServerHostedBee.BuildUrl(id);
+            error = string.Empty;
+            return true;
+        }
+        return ValidateUrl(url, out normalizedUrl, out error);
+    }
     private static async Task<BeeResult<DownloadPayload>> DownloadRangeInternal(string url, long startByte, long? endByteInclusive, string toFilePath, BasisProgressReport progress, CancellationToken ct, long MaxDownloadSizeInMB = 4L * 1024 * 1024 * 1024, int redirectsRemaining = MaxValidatedRedirects)
     {
+        if (BasisServerHostedBee.TryParse(url, out string hostedId))
+            return await DownloadHostedRangeInternal(hostedId, startByte, endByteInclusive, toFilePath, progress, ct, MaxDownloadSizeInMB);
         if (!ValidateUrl(url, out url, out var urlErr))
             return BeeResult<DownloadPayload>.Fail(urlErr);
 
@@ -985,14 +1021,14 @@ public static class BasisIOManagement
         string tempPath = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try
         {
-            using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, buffer, useAsync: true))
+            using (var fs = new FileStream(tempPath, FileMode.Create, FileAccess.Write, FileShare.None, buffer, useAsync: BasisTasks.ThreadsAvailable))
             {
-                await fs.WriteAsync(sizeLE, 0, sizeLE.Length).ConfigureAwait(false);
-                await fs.WriteAsync(connectorBytes, 0, connectorBytes.Length).ConfigureAwait(false);
+                await WriteChunkAsync(fs, sizeLE).ConfigureAwait(false);
+                await WriteChunkAsync(fs, connectorBytes).ConfigureAwait(false);
 
                 if (writeSection)
                 {
-                    await fs.WriteAsync(sectionBytes, 0, sectionBytes.Length).ConfigureAwait(false);
+                    await WriteChunkAsync(fs, sectionBytes).ConfigureAwait(false);
                 }
             }
 
@@ -1170,6 +1206,13 @@ public static class BasisIOManagement
         return false;
     }
 
+    private static Task WriteChunkAsync(FileStream fs, byte[] bytes)
+    {
+        if (BasisTasks.ThreadsAvailable) return fs.WriteAsync(bytes, 0, bytes.Length);
+        fs.Write(bytes, 0, bytes.Length);
+        return Task.CompletedTask;
+    }
+
     private static async Task<byte[]> ReadExactAsync(Stream s, int size, CancellationToken ct)
     {
         if (s == null) throw new ArgumentNullException(nameof(s));
@@ -1180,7 +1223,7 @@ public static class BasisIOManagement
 
         while (read < size)
         {
-            int n = await s.ReadAsync(buf, read, size - read, ct);
+            int n = BasisTasks.ThreadsAvailable ? await s.ReadAsync(buf, read, size - read, ct) : s.Read(buf, read, size - read);
             if (n <= 0) break;
             read += n;
         }

@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.Network.Core.Compression;
 using Basis.Scripts.BasisSdk.Players;
 using Basis.Scripts.Networking.NetworkedAvatar;
@@ -19,15 +20,16 @@ namespace Basis.Scripts.Networking.Receivers
     /// Receives networked avatar state for a remote player, stages and interpolates frames,
     /// and applies a posed result to the avatar each frame. Also brokers remote audio.
     /// </summary>
+    [AutoStaticsCleanup]
     [DefaultExecutionOrder(15001)]
     [Serializable]
-    public class BasisNetworkReceiver : BasisNetworkPlayer
+    public partial class BasisNetworkReceiver : BasisNetworkPlayer
     {
         public const int BoneCount = BasisBoneRotationCompression.SyncBoneCount; // 51
 
         // Cached delegates — created once, avoids per-frame Action/Comparison heap allocations.
-        private static readonly Action<BasisAvatarBuffer> s_releaseBuffer = BasisAvatarBufferPool.Release;
-        private static readonly Comparison<BasisAvatarBuffer> s_sequenceCompare = static (a, b) => (sbyte)(a.Sequence - b.Sequence);
+        [NoAutoStaticsCleanup] private static readonly Action<BasisAvatarBuffer> s_releaseBuffer = BasisAvatarBufferPool.Release;
+        [NoAutoStaticsCleanup] private static readonly Comparison<BasisAvatarBuffer> s_sequenceCompare = static (a, b) => (sbyte)(a.Sequence - b.Sequence);
 
         private double _serverClockSeconds;
         private bool _serverClockSeeded;
@@ -42,6 +44,10 @@ namespace Basis.Scripts.Networking.Receivers
         public ConcurrentQueue<BasisAvatarBuffer> PayloadQueue = new ConcurrentQueue<BasisAvatarBuffer>();
         // Volatile counter avoids ConcurrentQueue.TryDequeue on empty queues (1k volatile reads vs 1k TryDequeue).
         private volatile int _pendingCount;
+        // Streaming poses still in wire form (see EnqueueRawAvatarPayload); unpacked at the top of
+        // ComputeData, then fed through EnQueueAvatarBuffer exactly as an eagerly decoded pose was.
+        private readonly ConcurrentQueue<BasisAvatarBuffer> _rawPayloadQueue = new ConcurrentQueue<BasisAvatarBuffer>();
+        private volatile int _rawPendingCount;
         [System.NonSerialized] public BasisRemotePlayer RemotePlayer;
 
         public bool hasEvents = false;
@@ -167,16 +173,14 @@ namespace Basis.Scripts.Networking.Receivers
         // EMA time constant (s) for the applied playback rate, smooths rate steps.
         private const float RateSmoothingTau = 0.20f;
 
-        // Adaptive jitter buffer depth. Floors at MinJitterDepth = 1 (one packet of
-        // baseline cushion so the slowdown branch only fires on actual starvation, not
-        // routine jitter). Grows toward MaxJitterDepth on underruns, decays back when
-        // stable. Cold start begins at MinJitterDepth so a fresh remote join lerps at
-        // rate 1.0 immediately — the adaptive logic only adds headroom after observing
-        // real underruns. Driven by BasisSettingsDefaults.NetworkJitterBufferDepth via
-        // SettingsProviderNetworkTab — set ApplyTargetJitterDepth to retune all three.
-        public static int MinJitterDepth = 1;
-        public static int MaxJitterDepth = 4;
-        public static float InitialJitterDepth = 1f;
+        // Adaptive jitter buffer depth. Floors at MinJitterDepth = 2 packets of baseline
+        // cushion (~100ms at 50ms sync) so the slowdown branch only fires on actual
+        // starvation, not routine jitter. Grows toward MaxJitterDepth on underruns, decays
+        // back when stable. Cold start begins at the floor so a fresh remote join doesn't
+        // overshoot into the slowdown branch.
+        public const int MinJitterDepth = 2;
+        public const int MaxJitterDepth = 4;
+        private const float InitialJitterDepth = MinJitterDepth;
         private const float DepthBumpOnUnderrun = 0.5f;
         private const float DepthDecayPerSecond = 0.5f;
         // Hysteretic catch-up band: stay at rate 1.0 until backlog exceeds Enter, then
@@ -184,11 +188,6 @@ namespace Basis.Scripts.Networking.Receivers
         // green<->amber on routine +/-1-packet jitter.
         private const float CatchupEnterDeadband = 2.0f;
         private const float CatchupExitDeadband = 1.0f;
-        // When true, every receiver's _dynamicJitterDepth is hard-pinned to MinJitterDepth
-        // each frame: decay-toward-floor and bump-on-underrun are both skipped, so the
-        // depth never drifts. Lets the user pick a fixed cushion via the override setting
-        // and have it actually stay there.
-        public static bool JitterDepthLocked = false;
         private float _dynamicJitterDepth = InitialJitterDepth;
         private float _lastPlaybackRate = 1f;
         private bool _catchingUp;
@@ -206,36 +205,6 @@ namespace Basis.Scripts.Networking.Receivers
         private float _packetsPerSecond;
         private float _voiceBytesPerSecond;
         private float _voicePacketsPerSecond;
-
-        /// <summary>
-        /// Sets the adaptive jitter depth parameters from a single user-facing "target depth"
-        /// value. Initial matches target so cold starts don't overshoot into the slowdown
-        /// branch; Max caps the underrun growth at target+2 but never below 4 so we still
-        /// have room to react to unstable networks. Leaves the lock off, so depth still adapts.
-        /// </summary>
-        public static void ApplyTargetJitterDepth(int target)
-        {
-            target = math.clamp(target, 0, 6);
-            MinJitterDepth = target;
-            InitialJitterDepth = target;
-            MaxJitterDepth = math.max(target + 2, 4);
-            JitterDepthLocked = false;
-        }
-
-        /// <summary>
-        /// Pins the jitter depth at a fixed target — no decay, no underrun growth. All three
-        /// fields collapse to <paramref name="target"/>, and the per-frame hot path holds
-        /// _dynamicJitterDepth at MinJitterDepth so the rate formula's equilibrium stays
-        /// exactly where the user asked.
-        /// </summary>
-        public static void ApplyLockedJitterDepth(int target)
-        {
-            target = math.clamp(target, 0, 6);
-            MinJitterDepth = target;
-            InitialJitterDepth = target;
-            MaxJitterDepth = target;
-            JitterDepthLocked = true;
-        }
 
         public bool HasCurrentBuffer = false;
         public bool HasNextBuffer = false;
@@ -266,31 +235,31 @@ namespace Basis.Scripts.Networking.Receivers
         public static bool EndEffectorIKEnabled = true;
 
         /// <summary>
-        /// Interpolates this player's anchored end-effector targets (hips-local offset + tip rotation)
-        /// and writes them to the remote bone job system's playerId-keyed inputs. Runs on the
-        /// pre-schedule receiver pass — no transform access; the Burst read/compute/write jobs do the
-        /// actual anchoring. Only limbs anchored in BOTH bracketing frames stay masked; the rest FK.
+        /// Publishes this player's anchored end-effector mask to the remote bone job system's
+        /// playerId-keyed inputs. Runs on the pre-schedule receiver pass. The window's two bracketing
+        /// effector frames are stored when the window slides (<see cref="RefreshWindowEffectorMask"/>)
+        /// and blended at the interpolation time by a Burst job, so this is one byte write per player.
+        /// Only limbs anchored in BOTH bracketing frames stay masked; the rest FK.
         /// </summary>
-        public unsafe void WriteEffectorJobInputs()
+        private int _windowEffectorMask;
+        private void RefreshWindowEffectorMask()
         {
             BasisAvatarBuffer cur = Current, nxt = Next;
-            int mask = (cur != null && nxt != null) ? (cur.EffectorMask & nxt.EffectorMask) : 0;
-            if (mask == 0)
+            _windowEffectorMask = (cur != null && nxt != null) ? (cur.EffectorMask & nxt.EffectorMask) : 0;
+            if (_windowEffectorMask != 0)
+            {
+                BasisRemoteNetworkDriver.SetEffectorWindow(playerId, cur.EffectorPos, cur.EffectorRot, nxt.EffectorPos, nxt.EffectorRot);
+            }
+        }
+        public void WriteEffectorJobInputs()
+        {
+            int mask = _windowEffectorMask;
+            if (mask == 0 || Current == null || Next == null)
             {
                 BasisRemoteNetworkDriver.ClearEffectorMask(playerId);
                 return;
             }
-
-            float t = math.saturate((float)interpolationTime);
-            int n = BasisAvatarEndEffectors.EffectorCount;
-            float3* offsets = stackalloc float3[n];
-            quaternion* tipRots = stackalloc quaternion[n];
-            for (int i = 0; i < n; i++)
-            {
-                offsets[i] = math.lerp(cur.EffectorPos[i], nxt.EffectorPos[i], t);
-                tipRots[i] = BasisRemoteInterpolationCore.NlerpShortest(cur.EffectorRot[i], nxt.EffectorRot[i], t);
-            }
-            BasisRemoteNetworkDriver.WriteEffectorInputs(playerId, (byte)mask, offsets, tipRots);
+            BasisRemoteNetworkDriver.SetEffectorMask(playerId, (byte)mask);
         }
 
         /// <summary>Records received bytes-on-wire for this player (call from the packet handler; thread-safe).</summary>
@@ -379,21 +348,28 @@ namespace Basis.Scripts.Networking.Receivers
             }
 
             // Audio decode is thread-safe (per-receiver decoder/buffers, no Unity API).
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || UNITY_INCLUDE_INSTRUMENTATION
             UnityEngine.Profiling.Profiler.BeginSample("ComputeData.AudioDecode");
 #endif
             if (!AudioReceiverModule.IsAudioActive || AudioReceiverModule.VoiceBuffer.DecodedFrameCount == 0)
             {
                 AudioReceiverModule.DrainAndDecodeThreadSafe();
             }
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || UNITY_INCLUDE_INSTRUMENTATION
             UnityEngine.Profiling.Profiler.EndSample();
 #endif
+
+            // 0) Unpack streaming poses that arrived since the last pass. Ahead of the
+            // hasRequiredData gate so the latest-pose snapshot keeps advancing while an avatar loads.
+            if (Interlocked.Exchange(ref _rawPendingCount, 0) > 0)
+            {
+                DecodeRawPayloads();
+            }
 
             if (!hasRequiredData) return;
 
             // 1) Pull network packets, drop stale, sort by sequence, then stage
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || UNITY_INCLUDE_INSTRUMENTATION
             UnityEngine.Profiling.Profiler.BeginSample("ComputeData.PacketDrain");
 #endif
             if (System.Threading.Interlocked.Exchange(ref _pendingCount, 0) > 0)
@@ -471,12 +447,12 @@ namespace Basis.Scripts.Networking.Receivers
                 }
                 StagedCount = _stagedRing.Count;
             }
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || UNITY_INCLUDE_INSTRUMENTATION
             UnityEngine.Profiling.Profiler.EndSample();
 #endif
 
             // 2) Ensure we have a valid interpolation window (Current -> Next)
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || UNITY_INCLUDE_INSTRUMENTATION
             UnityEngine.Profiling.Profiler.BeginSample("ComputeData.BufferWindow");
 #endif
             if (!HasCurrentBuffer)
@@ -492,7 +468,7 @@ namespace Basis.Scripts.Networking.Receivers
             HasBufferHolds = HasCurrentBuffer && HasNextBuffer;
             if (!HasBufferHolds)
             {
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || UNITY_INCLUDE_INSTRUMENTATION
                 UnityEngine.Profiling.Profiler.EndSample();
 #endif
                 return;
@@ -511,25 +487,18 @@ namespace Basis.Scripts.Networking.Receivers
                 }
             }
             StagedCount = _stagedRing.Count;
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || UNITY_INCLUDE_INSTRUMENTATION
             UnityEngine.Profiling.Profiler.EndSample();
 #endif
 
             // 3) Advance time and slide the interpolation window forward as needed.
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || UNITY_INCLUDE_INSTRUMENTATION
             UnityEngine.Profiling.Profiler.BeginSample("ComputeData.FrameInputs");
 #endif
             if (HasBufferHolds)
             {
-                if (JitterDepthLocked)
-                {
-                    _dynamicJitterDepth = MinJitterDepth;
-                }
-                else
-                {
-                    _dynamicJitterDepth = math.max((float)MinJitterDepth,
-                        _dynamicJitterDepth - DepthDecayPerSecond * (float)unscaledDeltaTime);
-                }
+                _dynamicJitterDepth = math.max((float)MinJitterDepth,
+                    _dynamicJitterDepth - DepthDecayPerSecond * (float)unscaledDeltaTime);
 
                 double windowDuration = Next.ServerTimeSeconds - Current.ServerTimeSeconds;
                 if (!(windowDuration > 1e-6 && windowDuration < 1e6))
@@ -584,17 +553,13 @@ namespace Basis.Scripts.Networking.Receivers
                     interpolationTime -= 1.0;
 
                     TrySetLastFromStaging();
+                    RefreshWindowEffectorMask();
 
                     HasBufferHolds = HasCurrentBuffer && HasNextBuffer;
                     if (!HasBufferHolds)
                     {
                         // Window starved during advance — grow target so next time has headroom.
-                        // Skip the bump when the user has locked the depth; they explicitly
-                        // asked for a fixed cushion, so don't grow past it.
-                        if (!JitterDepthLocked)
-                        {
-                            _dynamicJitterDepth = math.min(_dynamicJitterDepth + DepthBumpOnUnderrun, (float)MaxJitterDepth);
-                        }
+                        _dynamicJitterDepth = math.min(_dynamicJitterDepth + DepthBumpOnUnderrun, (float)MaxJitterDepth);
                         break;
                     }
 
@@ -647,7 +612,7 @@ namespace Basis.Scripts.Networking.Receivers
                     SentLatest = false;
                 }
             }
-#if UNITY_EDITOR || DEVELOPMENT_BUILD
+#if UNITY_EDITOR || UNITY_INCLUDE_INSTRUMENTATION
             UnityEngine.Profiling.Profiler.EndSample();
 #endif
         }
@@ -713,6 +678,42 @@ namespace Basis.Scripts.Networking.Receivers
             return false;
         }
 
+        /// <summary>
+        /// Queues a streaming pose still in wire form (staged by
+        /// <see cref="BasisAvatarBuffer.SetRawPayload"/>). Thread-safe. The bit unpack runs in this
+        /// receiver's ComputeData, in parallel with every other receiver, instead of on the thread
+        /// that polled the packet.
+        /// </summary>
+        public void EnqueueRawAvatarPayload(BasisAvatarBuffer rawBuffer)
+        {
+            _rawPayloadQueue.Enqueue(rawBuffer);
+            Interlocked.Increment(ref _rawPendingCount);
+        }
+
+        private void DecodeRawPayloads()
+        {
+            while (_rawPayloadQueue.TryDequeue(out BasisAvatarBuffer buffer))
+            {
+                if (BasisNetworkAvatarDecompressor.TryDecodeRawPayload(buffer))
+                {
+                    EnQueueAvatarBuffer(buffer);
+                }
+                else
+                {
+                    BasisAvatarBufferPool.Release(buffer);
+                }
+            }
+        }
+
+        private void ReleaseRawPayloads()
+        {
+            while (_rawPayloadQueue.TryDequeue(out BasisAvatarBuffer buffer))
+            {
+                BasisAvatarBufferPool.Release(buffer);
+            }
+            _rawPendingCount = 0;
+        }
+
         public void EnQueueAvatarBuffer(BasisAvatarBuffer avatarBuffer)
         {
             // Single choke point for every decoded remote pose (keyframe and delta). One
@@ -723,6 +724,7 @@ namespace Basis.Scripts.Networking.Receivers
             if (!IsFinite(avatarBuffer.Position) || !IsFinite(avatarBuffer.Rotation) || !IsFinite(avatarBuffer.Scale))
             {
                 BasisDebug.LogErrorOnce($"Dropped a non-finite network pose for player {playerId}: pos={avatarBuffer.Position} rot={avatarBuffer.Rotation} scale={avatarBuffer.Scale}", BasisDebug.LogTag.Networking);
+                BasisAvatarBufferPool.Release(avatarBuffer);
                 return;
             }
             // Finite is not enough: a value near 3.4e38 overflows the per-frame filter's
@@ -730,6 +732,7 @@ namespace Basis.Scripts.Networking.Receivers
             if (!IsWithinWorldBounds(avatarBuffer.Position))
             {
                 BasisDebug.LogErrorOnce($"Dropped an out-of-range network pose for player {playerId}: pos={avatarBuffer.Position}", BasisDebug.LogTag.Networking);
+                BasisAvatarBufferPool.Release(avatarBuffer);
                 return;
             }
             Interlocked.Increment(ref _poseVersion);
@@ -776,6 +779,7 @@ namespace Basis.Scripts.Networking.Receivers
                 BasisAvatarBufferPool.Release(buf);
             }
             _pendingCount = 0;
+            ReleaseRawPayloads();
 
             // The slot may have been reused from a player who already left; without
             // this the retained last-applied-scale suppresses the first-frame change
@@ -888,6 +892,7 @@ namespace Basis.Scripts.Networking.Receivers
                 BasisAvatarBufferPool.Release(buffer);
             }
             _pendingCount = 0;
+            ReleaseRawPayloads();
 
             ClearAndRelease();
 
@@ -957,6 +962,7 @@ namespace Basis.Scripts.Networking.Receivers
                 Current = first;
                 SentLatest = true;
                 HasCurrentBuffer = true;
+                RefreshWindowEffectorMask();
             }
 
             StagedCount = _stagedRing.Count;
@@ -975,6 +981,7 @@ namespace Basis.Scripts.Networking.Receivers
                 Next = next;
                 SentLatest = true;
                 HasNextBuffer = true;
+                RefreshWindowEffectorMask();
             }
 
             StagedCount = _stagedRing.Count;
@@ -995,6 +1002,7 @@ namespace Basis.Scripts.Networking.Receivers
                 Next = null;
                 HasNextBuffer = false;
             }
+            _windowEffectorMask = 0;
         }
 
         public void ReleaseCurrent()
@@ -1004,6 +1012,7 @@ namespace Basis.Scripts.Networking.Receivers
                 BasisAvatarBufferPool.Release(Current);
                 Current = null;
                 HasCurrentBuffer = false;
+                _windowEffectorMask = 0;
             }
         }
     }

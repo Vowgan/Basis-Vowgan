@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.Scripts.Common;
 using Basis.Scripts.Player;
 using System;
@@ -66,6 +67,7 @@ namespace Basis.Scripts.Drivers
     /// The grid is a property of the AVATAR ASSET, not of the player wearing it, so it is interned
     /// through BasisAvatarModelCache: a crowd in matching avatars bakes once.
     /// </summary>
+    [NoAutoStaticsCleanup]
     public sealed class BasisHandPoseGrid : IDisposable
     {
         public const int FingerCount = 10;
@@ -348,7 +350,12 @@ namespace Basis.Scripts.Drivers
             GridWidth = Mathf.RoundToInt(2f / Increment) + 1;
             GridHeight = GridWidth;
 
-            GameObject copy = UnityEngine.Object.Instantiate(source.gameObject);
+            // Instantiated under an inactive parent so the copy is never active: no Awake/OnEnable on
+            // the avatar's components and no renderer or collider registration, all of which the
+            // bake never reads. Every read below already ran on an inactive copy.
+            GameObject holder = new GameObject("HandPoseBake");
+            holder.SetActive(false);
+            GameObject copy = UnityEngine.Object.Instantiate(source.gameObject, holder.transform, false);
             copy.SetActive(false);
             try
             {
@@ -457,7 +464,7 @@ namespace Basis.Scripts.Drivers
             }
             finally
             {
-                DestroyCopy(copy);
+                DestroyCopy(holder);
             }
 
             return true;

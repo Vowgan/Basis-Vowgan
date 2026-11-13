@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.Network.Core;
 using Basis.BasisUI;
 using Basis.Scripts.Audio;
@@ -28,7 +29,8 @@ using static SerializableBasis;
 /// camera and nameplate is an independent scene root so the transform writes spread
 /// across worker threads instead of serializing on a shared hierarchy.
 /// </summary>
-public static class BasisNetworkPIPCameraDriver
+[AutoStaticsCleanup]
+public static partial class BasisNetworkPIPCameraDriver
 {
     /// <summary>
     /// Fired when a remote player's PIP camera is created.
@@ -55,13 +57,13 @@ public static class BasisNetworkPIPCameraDriver
 
     // Dense per-camera SoA. Index i is shared across all of these plus the two
     // TransformAccessArrays and denseToPlayerId; swap-back removal keeps them aligned.
-    private static NativeList<float3> currentPositions;
-    private static NativeList<float3> targetPositions;
-    private static NativeList<quaternion> currentRotations;
-    private static NativeList<quaternion> targetRotations;
-    private static NativeList<float> nameplateHeights;
-    private static TransformAccessArray cameraTransforms;
-    private static TransformAccessArray namePlateTransforms;
+    [NoAutoStaticsCleanup] private static NativeList<float3> currentPositions;
+    [NoAutoStaticsCleanup] private static NativeList<float3> targetPositions;
+    [NoAutoStaticsCleanup] private static NativeList<quaternion> currentRotations;
+    [NoAutoStaticsCleanup] private static NativeList<quaternion> targetRotations;
+    [NoAutoStaticsCleanup] private static NativeList<float> nameplateHeights;
+    [NoAutoStaticsCleanup] private static TransformAccessArray cameraTransforms;
+    [NoAutoStaticsCleanup] private static TransformAccessArray namePlateTransforms;
     private static readonly List<ushort> denseToPlayerId = new();
     private static readonly Dictionary<ushort, int> playerIdToIndex = new();
     private static JobHandle pipHandle;
@@ -70,6 +72,7 @@ public static class BasisNetworkPIPCameraDriver
     private static readonly Dictionary<ushort, GameObject> pipInstances = new();
     private static readonly Dictionary<ushort, RemotePipNamePlate> pipNamePlates = new();
     private static readonly List<ushort> pendingNameBakes = new();
+    private static readonly Dictionary<ushort, Coroutine> remoteCountdowns = new();
 
     private const float NamePlateScale = 0.015f;
     private const float NamePlateMargin = 0.04f;
@@ -118,6 +121,7 @@ public static class BasisNetworkPIPCameraDriver
     {
         if (initialized) return;
 
+        DisposeContainers();
         currentPositions = new NativeList<float3>(InitialCapacity, Allocator.Persistent);
         targetPositions = new NativeList<float3>(InitialCapacity, Allocator.Persistent);
         currentRotations = new NativeList<quaternion>(InitialCapacity, Allocator.Persistent);
@@ -156,6 +160,17 @@ public static class BasisNetworkPIPCameraDriver
         }
         loadedPrefab = null;
 
+        DisposeContainers();
+
+        playerIdToIndex.Clear();
+        denseToPlayerId.Clear();
+        pendingNameBakes.Clear();
+
+        initialized = false;
+    }
+
+    private static void DisposeContainers()
+    {
         if (currentPositions.IsCreated) currentPositions.Dispose();
         if (targetPositions.IsCreated) targetPositions.Dispose();
         if (currentRotations.IsCreated) currentRotations.Dispose();
@@ -163,12 +178,6 @@ public static class BasisNetworkPIPCameraDriver
         if (nameplateHeights.IsCreated) nameplateHeights.Dispose();
         if (cameraTransforms.isCreated) cameraTransforms.Dispose();
         if (namePlateTransforms.isCreated) namePlateTransforms.Dispose();
-
-        playerIdToIndex.Clear();
-        denseToPlayerId.Clear();
-        pendingNameBakes.Clear();
-
-        initialized = false;
     }
 
     public static void ClearRemotePIPs()
@@ -445,27 +454,46 @@ public static class BasisNetworkPIPCameraDriver
     public static void OnRemoteCountdown(CameraCountdownMessage msg)
     {
         if (!initialized) return;
-        BasisDeviceManagement.Instance.StartCoroutine(RemoteCountdownCoroutine(msg.PlayerID, msg.Seconds));
+        StopRemoteCountdown(msg.PlayerID);
+        if (msg.Seconds == 0) return;
+        float total = BasisCameraCountdownRing.CaptureDelay(msg.Seconds), untilCapture = total - EstimateCountdownDelay();
+        if (untilCapture <= 0f) return;
+        if (pipInstances.TryGetValue(msg.PlayerID, out GameObject instance)) BasisCameraCountdownRing.Begin(instance, untilCapture, total);
+        remoteCountdowns[msg.PlayerID] = BasisDeviceManagement.Instance.StartCoroutine(RemoteCountdownCoroutine(msg.PlayerID, msg.Seconds, Time.time + untilCapture));
     }
 
-    private static IEnumerator RemoteCountdownCoroutine(ushort playerId, int seconds)
+    private static float EstimateCountdownDelay()
+    {
+        NetPeer peer = BasisNetworkConnection.LocalPlayerPeer;
+        return peer == null ? 0f : Mathf.Clamp(peer.RoundTripTime / 1000f, 0f, 1f);
+    }
+
+    private static void StopRemoteCountdown(ushort playerId)
+    {
+        if (remoteCountdowns.Remove(playerId, out Coroutine routine) && routine != null && BasisDeviceManagement.Instance != null) BasisDeviceManagement.Instance.StopCoroutine(routine);
+        if (pipInstances.TryGetValue(playerId, out GameObject instance)) BasisCameraCountdownRing.Cancel(instance);
+    }
+
+    private static IEnumerator RemoteCountdownCoroutine(ushort playerId, int seconds, float captureTime)
     {
         for (int i = seconds; i > 0; i--)
         {
+            float tickTime = captureTime - BasisCameraCountdownRing.CaptureLead - i;
+            if (Time.time > tickTime + 0.25f) continue;
+            while (Time.time < tickTime) yield return null;
             if (BasisDeviceManagement.Instance.CameraCountdownTickSound != null && TryGetPIPPosition(playerId, out Vector3 tickPos))
             {
                 BasisUISounds.PlayAt(BasisUISoundEvent.CameraCountdownTick, BasisDeviceManagement.Instance.CameraCountdownTickSound, tickPos, SMModuleAudio.ActivePropVolume);
             }
-            yield return new WaitForSeconds(1f);
         }
 
-        // Match the 0.5s pause before capture
-        yield return new WaitForSeconds(0.5f);
+        while (Time.time < captureTime) yield return null;
 
         if (BasisDeviceManagement.Instance.CameraShutterSound != null && TryGetPIPPosition(playerId, out Vector3 shutterPos))
         {
             BasisUISounds.PlayAt(BasisUISoundEvent.CameraShutter, BasisDeviceManagement.Instance.CameraShutterSound, shutterPos, SMModuleAudio.ActivePropVolume);
         }
+        remoteCountdowns.Remove(playerId);
     }
 
     /// <summary>
@@ -567,6 +595,7 @@ public static class BasisNetworkPIPCameraDriver
     /// </summary>
     private static void RemoveRemotePIP(ushort playerId)
     {
+        StopRemoteCountdown(playerId);
         if (playerIdToIndex.TryGetValue(playerId, out int idx))
         {
             int last = currentPositions.Length - 1;
@@ -682,6 +711,14 @@ public static class BasisNetworkPIPCameraDriver
 
     private static void ClearRemotePIPsInternal()
     {
+        if (BasisDeviceManagement.Instance != null)
+        {
+            foreach (var kvp in remoteCountdowns)
+            {
+                if (kvp.Value != null) BasisDeviceManagement.Instance.StopCoroutine(kvp.Value);
+            }
+        }
+        remoteCountdowns.Clear();
         foreach (var kvp in pipNamePlates)
         {
             RemotePipNamePlate plate = kvp.Value;

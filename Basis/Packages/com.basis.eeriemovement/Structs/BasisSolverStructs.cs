@@ -11,14 +11,13 @@ namespace Basis.IK
     public struct BasisArmState
     {
         public float SwivelDeg, SwitchTimer, PriorDeg, RawDeg, ReachRatio, ElbowDeg, HumeralDeg, PronationDeg, WristFlexDeg, WristDevDeg, Cost, ShoulderBlend;
-        public Vector3 LastTarget, LastAxis, ElbowDir, PriorDir;
+        public Vector3 LastTarget, LastAxis, ElbowDir, PriorDir, HintPosition, ConstrainedHintPosition;
         public Quaternion ShoulderHold;
         public bool Seeded, Switched, ShoulderHeld;
     }
     public struct BasisLegSlotState
     {
-        public BasisSwivelFilterState Swivel;
-        public bool SwivelSeeded;
+        public Vector3 KneeDir, PoleDir, ConstrainedHintPosition;
     }
     public struct BasisChestSpringState
     {

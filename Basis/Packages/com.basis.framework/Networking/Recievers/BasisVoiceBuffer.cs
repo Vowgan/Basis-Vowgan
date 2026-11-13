@@ -49,7 +49,7 @@ public class BasisVoiceBuffer
     private const int DecayIntervalMs = 5000; // ~5 s half-life
 
     // ── Adaptive jitter depth (per stream) ──
-    // RemoteOpusSettings.JitterBufferSize is the user-set FLOOR. We grow the effective
+    // RemoteOpusSettings.JitterBufferSize is the FLOOR. We grow the effective
     // depth for THIS stream when packets are seen arriving too late for the current
     // depth, and relax back toward the floor when the stream is clean. Lateness is
     // measured clock-free (a packet whose playback slot already passed, counted in
@@ -257,6 +257,7 @@ public class BasisVoiceBuffer
 
     public int DecodedFrameCount => Volatile.Read(ref _frameCount);
     public int DecodedFrameCapacity => MaxDecodedFrames;
+    public bool IsIdleRelaxed => Volatile.Read(ref _encodedCount) == 0 && Volatile.Read(ref _frameCount) == 0 && !Volatile.Read(ref _holdingForSeq) && (!_started || !Volatile.Read(ref _hasHighest) || SeqDist(Volatile.Read(ref _highestReceivedSeq), Volatile.Read(ref _nextPlaybackSeq)) < 0);
 
     /// <summary>Approximate buffered sample count for diagnostics.</summary>
     public int SampleCount

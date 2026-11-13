@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using System.Collections.Generic;
 using System.Runtime.InteropServices;
 using Basis.Scripts.Device_Management;
@@ -26,7 +27,8 @@ namespace Basis.Scripts.UI.NamePlate
     ///    matrices and pushes the position buffer with revalidation disabled.
     /// Hidden plates collapse to a degenerate point via a zero matrix, so visibility needs no rebuild.
     /// </summary>
-    public static class BasisGlobalNamePlateRenderer
+    [AutoStaticsCleanup]
+    public static partial class BasisGlobalNamePlateRenderer
     {
         private const float NoCullExtent = 100000f;
 
@@ -73,8 +75,8 @@ namespace Basis.Scripts.UI.NamePlate
 
         // Per-frame plate data, indexed by snapshot order.
         private static readonly List<BasisRemoteNamePlate> snapshot = new(64);
-        private static NativeArray<Matrix4x4> matrices;
-        private static NativeArray<Color> plateColors;
+        [NoAutoStaticsCleanup] private static NativeArray<Matrix4x4> matrices;
+        [NoAutoStaticsCleanup] private static NativeArray<Color> plateColors;
         private static int plateCapacity;
 
         // Plate-order → playerId (cached at topology rebuild) and → dense sOut slot (resolved each
@@ -82,16 +84,25 @@ namespace Basis.Scripts.UI.NamePlate
         // pose (sOut: hips + height) in Burst, instead of reading the plate Transform on the main
         // thread. The nameplate is a standalone scene root scaled by NamePlateSize, so its full
         // world matrix is hips-position + yaw-to-camera + that uniform scale.
-        private static NativeArray<int> plateKey;
-        private static NativeArray<int> plateSlot;
+        [NoAutoStaticsCleanup] private static NativeArray<int> plateKey;
+        [NoAutoStaticsCleanup] private static NativeArray<int> plateSlot;
         // Per-plate world position copied out of sOut during the gather, so the scheduled
         // matrix job never dereferences the bone system's array while deferred to before-render.
-        private static NativeArray<float3> platePos;
+        [NoAutoStaticsCleanup] private static NativeArray<float3> platePos;
+        [NoAutoStaticsCleanup] private static NativeArray<RaycastCommand> occlusionCommands;
+        [NoAutoStaticsCleanup] private static NativeArray<RaycastHit> occlusionHits;
+        private static int[] occlusionPlate;
         // Snapshot mirrored as a plain array so the per-frame gather indexes a T[] instead of
         // List<T>.this[] (the List indexer's bounds-check showed up in the gather).
         private static BasisRemoteNamePlate[] snapArr = System.Array.Empty<BasisRemoteNamePlate>();
+        // Per-snapshot mirror of each plate's gather inputs (RenderActive && !NameHidden, and
+        // CurrentColor), seeded at topology rebuild and pushed by the plate on change via
+        // PushPlateState. Lets the per-frame gather run in Burst without touching plate objects.
+        [NoAutoStaticsCleanup] private static NativeArray<byte> plateGate;
+        [NoAutoStaticsCleanup] private static NativeArray<Color> plateColorSrc;
+        private static int snapCount;
         // Reused scratch for the per-vertex GPU plate-id UV fill (avoids a per-rebuild Temp alloc).
-        private static NativeArray<Vector2> uvScratch;
+        [NoAutoStaticsCleanup] private static NativeArray<Vector2> uvScratch;
 
         // Topology rebuild (CombineMeshes) is heavy and allocates; coalesce it during join storms so
         // it runs at most once per this many frames while plates are streaming in. A lone join after
@@ -104,13 +115,13 @@ namespace Basis.Scripts.UI.NamePlate
         // CombineInstance[] GC. Flip false to fall back to the CombineMeshes path. (Text still uses
         // CombineMeshes.)
         public static bool ManualMergePanel = true;
-        private static NativeArray<PanelVertex> panelScratch;
-        private static NativeArray<uint> indexScratch;
-        private static NativeArray<Vector3> tmpPos;
-        private static NativeArray<Vector2> tmpUv0;
-        private static NativeArray<int> tmpIdx;
+        [NoAutoStaticsCleanup] private static NativeArray<PanelVertex> panelScratch;
+        [NoAutoStaticsCleanup] private static NativeArray<uint> indexScratch;
+        [NoAutoStaticsCleanup] private static NativeArray<Vector3> tmpPos;
+        [NoAutoStaticsCleanup] private static NativeArray<Vector2> tmpUv0;
+        [NoAutoStaticsCleanup] private static NativeArray<int> tmpIdx;
         private static readonly List<Mesh> srcMeshList = new(64);
-        private static readonly VertexAttributeDescriptor[] PanelLayout =
+        [NoAutoStaticsCleanup] private static readonly VertexAttributeDescriptor[] PanelLayout =
         {
             new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3),
             new VertexAttributeDescriptor(VertexAttribute.TexCoord0, VertexAttributeFormat.Float32, 2),
@@ -128,12 +139,12 @@ namespace Basis.Scripts.UI.NamePlate
         // Manual text merge (same idea as the panel, but the forked TMP SDF vertex is multi-channel:
         // position + normal + color + 4-component UV0 (atlas + SDF scale in .w) + the plate id in UV2).
         public static bool ManualMergeText = true;
-        private static NativeArray<TextVertex> textScratch;
+        [NoAutoStaticsCleanup] private static NativeArray<TextVertex> textScratch;
         // Per-source-mesh write offsets + plate id, filled on the main thread and read by MergeTextJob.
-        private static NativeArray<int> textVOff;
-        private static NativeArray<int> textIOff;
-        private static NativeArray<int> textPlateId;
-        private static readonly VertexAttributeDescriptor[] TextLayout =
+        [NoAutoStaticsCleanup] private static NativeArray<int> textVOff;
+        [NoAutoStaticsCleanup] private static NativeArray<int> textIOff;
+        [NoAutoStaticsCleanup] private static NativeArray<int> textPlateId;
+        [NoAutoStaticsCleanup] private static readonly VertexAttributeDescriptor[] TextLayout =
         {
             new VertexAttributeDescriptor(VertexAttribute.Position, VertexAttributeFormat.Float32, 3),
             new VertexAttributeDescriptor(VertexAttribute.Normal, VertexAttributeFormat.Float32, 3),
@@ -159,8 +170,8 @@ namespace Basis.Scripts.UI.NamePlate
         public static bool UseBoneSystemMatrices = true;
 
         // Shared GPU per-plate buffers (matrices stored as 4 float4 columns each).
-        private static GraphicsBuffer plateMatrixBuffer;
-        private static GraphicsBuffer plateColorBuffer;
+        [NoAutoStaticsCleanup] private static GraphicsBuffer plateMatrixBuffer;
+        [NoAutoStaticsCleanup] private static GraphicsBuffer plateColorBuffer;
         private static int gpuBufferCapacity;
 
         private static Layer panel;
@@ -222,6 +233,21 @@ namespace Basis.Scripts.UI.NamePlate
         }
 
         public static bool IsInitialized => initialized;
+
+        private static byte GateOf(BasisRemoteNamePlate p) => (p.RenderActive && !p.NameHidden) ? (byte)1 : (byte)0;
+
+        /// <summary>
+        /// Mirrors a plate's gather inputs into the native per-snapshot arrays. The plate calls this
+        /// whenever RenderActive, NameHidden or CurrentColor change; plates not in the current
+        /// snapshot are seeded by the next topology rebuild instead.
+        /// </summary>
+        internal static void PushPlateState(BasisRemoteNamePlate p)
+        {
+            int gi = p.GlobalIndex;
+            if ((uint)gi >= (uint)snapCount || !ReferenceEquals(snapArr[gi], p) || !plateGate.IsCreated) return;
+            plateGate[gi] = GateOf(p);
+            plateColorSrc[gi] = p.CurrentColor;
+        }
 
         /// <summary>Flags the merged geometry for a rebuild next frame (plate baked / removed).</summary>
         public static void MarkDirty() => dirty = true;
@@ -372,6 +398,10 @@ namespace Basis.Scripts.UI.NamePlate
         private static void RebuildTopology(BasisRemoteNamePlate[] plates, int count)
         {
             using var _scope = BasisNamePlateMarkers.Topology.Auto();
+            for (int i = 0; i < snapshot.Count; i++)
+            {
+                if (snapshot[i] != null) snapshot[i].GlobalIndex = -1;
+            }
             snapshot.Clear();
             for (int i = 0; i < count; i++)
             {
@@ -391,7 +421,13 @@ namespace Basis.Scripts.UI.NamePlate
                 var rp = plate.BasisRemotePlayer;
                 var recv = rp != null ? rp.NetworkReceiver : null;
                 plateKey[gi] = recv != null ? recv.playerId : -1;
+                plate.GlobalIndex = gi;
+                plateGate[gi] = GateOf(plate);
+                plateColorSrc[gi] = plate.CurrentColor;
             }
+            // Stale tail entries must not keep a dead plate reachable by PushPlateState's identity check.
+            for (int gi = plateCount; gi < snapCount; gi++) snapArr[gi] = null;
+            snapCount = plateCount;
 
             // Panel layer: one quad per plate.
             panel.Combine.Clear();
@@ -785,55 +821,82 @@ namespace Basis.Scripts.UI.NamePlate
             Color* colPtr = (Color*)plateColors.GetUnsafePtr();
             float3* posPtr = (float3*)platePos.GetUnsafePtr();
             RemoteFrameOutput* framePtr = (RemoteFrameOutput*)frames.GetUnsafeReadOnlyPtr();
-
-            for (int gi = 0; gi < plateCount; gi++)
+            int occlusionCount = 0;
+            if (!cullOccluded)
             {
-                BasisRemoteNamePlate p = snapArr[gi];
-                int pid = keyPtr[gi];
-                // ReferenceEquals + the cached RenderActive flag (cleared in DeInitialize) stand in for
-                // Unity's `p != null`, so the per-plate gather makes no managed→native op_Inequality call.
-                int slot = (!ReferenceEquals(p, null) && p.RenderActive && (uint)pid < (uint)mapLen) ? indexMap[pid] : -1;
-                if ((uint)slot >= (uint)frameLen) slot = -1;
-
-                if (slot >= 0)
+                fixed (int* mapPtr = indexMap)
                 {
-                    colPtr[gi] = p.CurrentColor;
+                    GatherKernel.Gather(plateCount, keyPtr, (byte*)plateGate.GetUnsafeReadOnlyPtr(),
+                        (Color*)plateColorSrc.GetUnsafeReadOnlyPtr(), mapPtr, mapLen, framePtr, frameLen,
+                        panelHalfHeightWorld, slotPtr, colPtr, posPtr);
+                }
+            }
+            else
+            {
+                QueryParameters occlusionQuery = new QueryParameters(OcclusionMask, false, QueryTriggerInteraction.Ignore, Physics.queriesHitBackfaces);
 
-                    RemoteFrameOutput f = framePtr[slot];
-                    Vector3 platePosition = new Vector3(
-                        f.pos_Hips.x,
-                        BasisNamePlateAnchorMath.AnchorWorldY(f.pos_Hips.y, f.NamePlateHeightAboveHips, panelHalfHeightWorld),
-                        f.pos_Hips.z);
-                    posPtr[gi] = platePosition;
+                for (int gi = 0; gi < plateCount; gi++)
+                {
+                    BasisRemoteNamePlate p = snapArr[gi];
+                    int pid = keyPtr[gi];
+                    // ReferenceEquals + the cached RenderActive flag (cleared in DeInitialize) stand in for
+                    // Unity's `p != null`, so the per-plate gather makes no managed→native op_Inequality call.
+                    int slot = (!ReferenceEquals(p, null) && p.RenderActive && !p.NameHidden && (uint)pid < (uint)mapLen) ? indexMap[pid] : -1;
+                    if ((uint)slot >= (uint)frameLen) slot = -1;
 
-                    if (cullOccluded)
+                    if (slot >= 0)
                     {
-                        // Reject on the cheap tests BEFORE paying for a scene query. Physics.Linecast
-                        // is a synchronous main-thread query costing microseconds each; at high player
-                        // counts running one per plate dominates the frame. The matrix job below
-                        // already culls by distance and by behind-camera, but it runs after this loop
-                        // — so without these two lines every plate behind you, or hundreds of metres
-                        // away, still paid for a raycast that its own result was about to discard.
-                        // These two tests MIRROR BuildMatricesJob below exactly (including the
-                        // distance-normalized behind test) so the visible result is unchanged — the
-                        // only difference is not paying for a query whose answer gets thrown away.
-                        Vector3 toPlate = platePosition - camPos;
-                        float distSqr = toPlate.sqrMagnitude;
-                        bool wouldBeCulled = distSqr > maxDistSqr;
-                        if (!wouldBeCulled && cullBehind && distSqr > 1e-6f)
-                        {
-                            float along = Vector3.Dot(camFwd, toPlate);
-                            if (along < BehindDotThreshold * Mathf.Sqrt(distSqr)) wouldBeCulled = true;
-                        }
+                        colPtr[gi] = p.CurrentColor;
 
-                        if (!wouldBeCulled &&
-                            Physics.Linecast(camPos, platePosition, OcclusionMask, QueryTriggerInteraction.Ignore))
+                        RemoteFrameOutput f = framePtr[slot];
+                        Vector3 platePosition = new Vector3(
+                            f.pos_Hips.x,
+                            BasisNamePlateAnchorMath.AnchorWorldY(f.pos_Hips.y, f.NamePlateHeightAboveHips, panelHalfHeightWorld),
+                            f.pos_Hips.z);
+                        posPtr[gi] = platePosition;
+
+                        if (cullOccluded)
                         {
-                            slot = -1;
+                            // Reject on the cheap tests BEFORE paying for a scene query. Physics.Linecast
+                            // is a synchronous main-thread query costing microseconds each; at high player
+                            // counts running one per plate dominates the frame. The matrix job below
+                            // already culls by distance and by behind-camera, but it runs after this loop
+                            // — so without these two lines every plate behind you, or hundreds of metres
+                            // away, still paid for a raycast that its own result was about to discard.
+                            // These two tests MIRROR BuildMatricesJob below exactly (including the
+                            // distance-normalized behind test) so the visible result is unchanged — the
+                            // only difference is not paying for a query whose answer gets thrown away.
+                            Vector3 toPlate = platePosition - camPos;
+                            float distSqr = toPlate.sqrMagnitude;
+                            bool wouldBeCulled = distSqr > maxDistSqr;
+                            if (!wouldBeCulled && cullBehind && distSqr > 1e-6f)
+                            {
+                                float along = Vector3.Dot(camFwd, toPlate);
+                                if (along < BehindDotThreshold * Mathf.Sqrt(distSqr)) wouldBeCulled = true;
+                            }
+
+                            if (!wouldBeCulled && distSqr > 0f)
+                            {
+                                float distance = Mathf.Sqrt(distSqr);
+                                occlusionCommands[occlusionCount] = new RaycastCommand(camPos, toPlate / distance, occlusionQuery, distance);
+                                occlusionPlate[occlusionCount++] = gi;
+                            }
                         }
                     }
+                    slotPtr[gi] = slot;
                 }
-                slotPtr[gi] = slot;
+            }
+
+            if (occlusionCount > 0)
+            {
+                RaycastCommand.ScheduleBatch(occlusionCommands.GetSubArray(0, occlusionCount), occlusionHits.GetSubArray(0, occlusionCount), 4).Complete();
+                for (int i = 0; i < occlusionCount; i++)
+                {
+                    if (occlusionHits[i].colliderEntityId.IsValid())
+                    {
+                        slotPtr[occlusionPlate[i]] = -1;
+                    }
+                }
             }
 
             // Phase 2: distance/angle cull + per-plate matrix math, scheduled to a worker. The fence
@@ -910,13 +973,23 @@ namespace Basis.Scripts.UI.NamePlate
             if (plateKey.IsCreated) plateKey.Dispose();
             if (plateSlot.IsCreated) plateSlot.Dispose();
             if (platePos.IsCreated) platePos.Dispose();
+            if (plateGate.IsCreated) plateGate.Dispose();
+            if (plateColorSrc.IsCreated) plateColorSrc.Dispose();
+            if (occlusionCommands.IsCreated) occlusionCommands.Dispose();
+            if (occlusionHits.IsCreated) occlusionHits.Dispose();
             plateCapacity = Mathf.Max(16, Mathf.NextPowerOfTwo(n));
+            occlusionCommands = new NativeArray<RaycastCommand>(plateCapacity, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            occlusionHits = new NativeArray<RaycastHit>(plateCapacity, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            occlusionPlate = new int[plateCapacity];
             matrices = new NativeArray<Matrix4x4>(plateCapacity, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             plateColors = new NativeArray<Color>(plateCapacity, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             plateKey = new NativeArray<int>(plateCapacity, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             plateSlot = new NativeArray<int>(plateCapacity, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             platePos = new NativeArray<float3>(plateCapacity, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
+            plateGate = new NativeArray<byte>(plateCapacity, Allocator.Persistent, NativeArrayOptions.ClearMemory);
+            plateColorSrc = new NativeArray<Color>(plateCapacity, Allocator.Persistent, NativeArrayOptions.UninitializedMemory);
             snapArr = new BasisRemoteNamePlate[plateCapacity];
+            snapCount = 0;
         }
 
         private static void EnsureGpuBuffers(int n)
@@ -1050,6 +1123,10 @@ namespace Basis.Scripts.UI.NamePlate
             if (plateKey.IsCreated) plateKey.Dispose();
             if (plateSlot.IsCreated) plateSlot.Dispose();
             if (platePos.IsCreated) platePos.Dispose();
+            if (plateGate.IsCreated) plateGate.Dispose();
+            if (plateColorSrc.IsCreated) plateColorSrc.Dispose();
+            if (occlusionCommands.IsCreated) occlusionCommands.Dispose();
+            if (occlusionHits.IsCreated) occlusionHits.Dispose();
             if (uvScratch.IsCreated) uvScratch.Dispose();
             if (panelScratch.IsCreated) panelScratch.Dispose();
             if (textScratch.IsCreated) textScratch.Dispose();
@@ -1061,7 +1138,12 @@ namespace Basis.Scripts.UI.NamePlate
             if (textIOff.IsCreated) textIOff.Dispose();
             if (textPlateId.IsCreated) textPlateId.Dispose();
             srcMeshList.Clear();
+            for (int i = 0; i < snapshot.Count; i++)
+            {
+                if (snapshot[i] != null) snapshot[i].GlobalIndex = -1;
+            }
             snapArr = System.Array.Empty<BasisRemoteNamePlate>();
+            snapCount = 0;
             plateCapacity = 0;
 
             plateMatrixBuffer?.Dispose();
@@ -1082,6 +1164,38 @@ namespace Basis.Scripts.UI.NamePlate
             panelKeywordApplied = false;
             initialized = false;
             dirty = false;
+        }
+
+        /// <summary>
+        /// Phase-1 gather of <see cref="GatherFromBoneSystem"/> for the no-occlusion case, as a
+        /// synchronous Burst call over the native mirrors instead of a managed walk of every plate
+        /// object. Same per-plate result as the managed loop it replaces.
+        /// </summary>
+        [BurstCompile]
+        private static unsafe class GatherKernel
+        {
+            [BurstCompile]
+            public static void Gather(int plateCount, int* keyPtr, byte* gatePtr, Color* colorSrc, int* indexMap, int mapLen,
+                RemoteFrameOutput* framePtr, int frameLen, float panelHalfHeightWorld, int* slotPtr, Color* colPtr, float3* posPtr)
+            {
+                for (int gi = 0; gi < plateCount; gi++)
+                {
+                    int pid = keyPtr[gi];
+                    int slot = (gatePtr[gi] != 0 && (uint)pid < (uint)mapLen) ? indexMap[pid] : -1;
+                    if ((uint)slot >= (uint)frameLen) slot = -1;
+
+                    if (slot >= 0)
+                    {
+                        colPtr[gi] = colorSrc[gi];
+                        RemoteFrameOutput* f = framePtr + slot;
+                        posPtr[gi] = new float3(
+                            f->pos_Hips.x,
+                            BasisNamePlateAnchorMath.AnchorWorldY(f->pos_Hips.y, f->NamePlateHeightAboveHips, panelHalfHeightWorld),
+                            f->pos_Hips.z);
+                    }
+                    slotPtr[gi] = slot;
+                }
+            }
         }
 
         [BurstCompile]

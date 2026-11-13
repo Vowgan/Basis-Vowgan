@@ -5,7 +5,7 @@ This package includes or depends on the following third-party components:
 
 ## Microsoft ONNX Runtime
 
-- Files: `Plugins/Managed/Microsoft.ML.OnnxRuntime.dll`, `Plugins/win-x64/native/onnxruntime.dll`, `Plugins/win-x64/native/onnxruntime_providers_shared.dll`
+- Files: `Plugins/Managed/Microsoft.ML.OnnxRuntime.dll`, `Plugins/win-x64/native/onnxruntime.dll`, `Plugins/win-x64/native/onnxruntime_providers_shared.dll`, `Plugins/linux-x64/native/libonnxruntime.so` (1.22.0, from https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-linux-x64-1.22.0.tgz)
 - Version: 1.x
 - License: MIT
 - Source: https://github.com/microsoft/onnxruntime
@@ -33,6 +33,12 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ```
+
+## Emscripten runtime (web lip sync kernel)
+
+- Files: `Plugins/Web/BasisWebLipSyncKernel.jslib`, which embeds `Native~/openlipsync_net.c` compiled to WebAssembly by `Native~/build_web.py` with the Emscripten bundled in Unity's Web module
+- Includes: musl libc `erff` and `expf` (MIT; `erff` derives from FreeBSD msun, Copyright (C) 1993 Sun Microsystems, Inc., freely redistributable with this notice preserved; `expf` Copyright (c) 2017-2018 Arm Limited), dlmalloc (CC0 / public domain), Emscripten `sbrk` and stack helpers (MIT)
+- Source: https://github.com/emscripten-core/emscripten, https://musl.libc.org
 
 ## Newtonsoft.Json (Json.NET)
 

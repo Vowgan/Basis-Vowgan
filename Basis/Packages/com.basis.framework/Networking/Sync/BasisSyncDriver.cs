@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using System.Collections.Generic;
 using Unity.Collections;
 using Unity.Jobs;
@@ -13,12 +14,14 @@ namespace Basis.Scripts.Networking.Sync
     /// drives owned objects' transmit cadence. Ticked from BasisEventDriver alongside the pickup
     /// driver: Initialize/OnDestroy, ScheduleRemote (Update), TransmitOwned + CompleteRemote (LateUpdate).
     /// </summary>
-    public static class BasisSyncDriver
+    [AutoStaticsCleanup]
+    public static partial class BasisSyncDriver
     {
         private static readonly List<BasisSyncedObject> _remote = new List<BasisSyncedObject>();
         private static readonly HashSet<BasisSyncedObject> _owned = new HashSet<BasisSyncedObject>();
         private static readonly List<BasisSyncedObject> _ownedScratch = new List<BasisSyncedObject>();
         private static readonly List<BasisSyncedObject> _mainThreadApply = new List<BasisSyncedObject>();
+        private static readonly HashSet<BasisSyncedObject> _mainThreadApplySet = new HashSet<BasisSyncedObject>();
         private static readonly List<BasisPickupSyncNetworking> _pickupReweld = new List<BasisPickupSyncNetworking>();
 
         private static bool _initialized;
@@ -31,16 +34,16 @@ namespace Basis.Scripts.Networking.Sync
         private static JobHandle _jobHandle;
 
         // Per-slot (indexed by remote list position).
-        private static NativeArray<byte> _active;
-        private static NativeArray<float> _t;
-        private static NativeArray<int> _contBase, _contCount, _rotBase, _rotCount, _discBase, _discCount;
+        [NoAutoStaticsCleanup] private static NativeArray<byte> _active, _jobApply;
+        [NoAutoStaticsCleanup] private static NativeArray<float> _t;
+        [NoAutoStaticsCleanup] private static NativeArray<int> _contBase, _contCount, _rotBase, _rotCount, _discBase, _discCount;
 
         // Pools.
-        private static NativeArray<float> _contCur, _contNext, _contOut;
-        private static NativeArray<byte> _contMode;
-        private static NativeArray<quaternion> _rotCur, _rotNext, _rotOut;
-        private static NativeArray<byte> _rotMode;
-        private static NativeArray<int> _discNext, _discOut;
+        [NoAutoStaticsCleanup] private static NativeArray<float> _contCur, _contNext, _contOut;
+        [NoAutoStaticsCleanup] private static NativeArray<byte> _contMode;
+        [NoAutoStaticsCleanup] private static NativeArray<quaternion> _rotCur, _rotNext, _rotOut;
+        [NoAutoStaticsCleanup] private static NativeArray<byte> _rotMode;
+        [NoAutoStaticsCleanup] private static NativeArray<int> _discNext, _discOut;
 
         // ── Batched distance/relevance reduction ──
         // Every owned object used to compute its own nearest-observer distance inside TransmitIfDue,
@@ -59,19 +62,19 @@ namespace Basis.Scripts.Networking.Sync
         private static int _reductionMasksPerObject = 1;
         private static int _reductionRawPlayerCount;
         private static readonly List<BasisSyncedObject> _reductionParticipants = new List<BasisSyncedObject>();
-        private static NativeArray<float3> _reductionObjectPositions;
-        private static NativeArray<float> _reductionRadiusSq;
-        private static NativeArray<float3> _reductionPlayerPositions;
-        private static NativeArray<float> _reductionNearestSq;
-        private static NativeArray<ulong> _reductionMask;
+        [NoAutoStaticsCleanup] private static NativeArray<float3> _reductionObjectPositions;
+        [NoAutoStaticsCleanup] private static NativeArray<float> _reductionRadiusSq;
+        [NoAutoStaticsCleanup] private static NativeArray<float3> _reductionPlayerPositions;
+        [NoAutoStaticsCleanup] private static NativeArray<float> _reductionNearestSq;
+        [NoAutoStaticsCleanup] private static NativeArray<ulong> _reductionMask;
         private static ushort[] _reductionPlayerIds = new ushort[0];
         private static ushort[] _reductionRecipientScratch = new ushort[0];
 
         // Receive decode fan-out. Each receiver touches only its own state and packets are only
         // produced by the main-thread action drain, which cannot run while this pass blocks.
         private static float _advanceDelta;
-        private static readonly System.Action<int> _advanceBody = AdvanceRemoteBody;
-        private static readonly System.Threading.Tasks.ParallelOptions _advanceOptions = new System.Threading.Tasks.ParallelOptions
+        [NoAutoStaticsCleanup] private static readonly System.Action<int> _advanceBody = AdvanceRemoteBody;
+        [NoAutoStaticsCleanup] private static readonly System.Threading.Tasks.ParallelOptions _advanceOptions = new System.Threading.Tasks.ParallelOptions
         {
             MaxDegreeOfParallelism = System.Math.Max(1, System.Environment.ProcessorCount - 2)
         };
@@ -86,8 +89,8 @@ namespace Basis.Scripts.Networking.Sync
         // Transform bindings.
         private static readonly List<Transform> _bindTransforms = new List<Transform>();
         private static readonly List<BasisSyncApplyBinding> _bindings = new List<BasisSyncApplyBinding>();
-        private static TransformAccessArray _taa;
-        private static NativeArray<BasisSyncApplyBinding> _bindingsArr;
+        [NoAutoStaticsCleanup] private static TransformAccessArray _taa;
+        [NoAutoStaticsCleanup] private static NativeArray<BasisSyncApplyBinding> _bindingsArr;
 
         public static void Initialize()
         {
@@ -115,7 +118,7 @@ namespace Basis.Scripts.Networking.Sync
             _reductionCount = 0;
             _lastReductionPassTime = double.NegativeInfinity;
 
-            DisposeIf(ref _active); DisposeIf(ref _t);
+            DisposeIf(ref _active); DisposeIf(ref _jobApply); DisposeIf(ref _t);
             DisposeIf(ref _contBase); DisposeIf(ref _contCount);
             DisposeIf(ref _rotBase); DisposeIf(ref _rotCount);
             DisposeIf(ref _discBase); DisposeIf(ref _discCount);
@@ -125,26 +128,48 @@ namespace Basis.Scripts.Networking.Sync
             DisposeIf(ref _bindingsArr);
             if (_taa.isCreated) _taa.Dispose();
 
+            for (int i = 0; i < _remote.Count; i++) if (_remote[i] is not null) _remote[i].SyncSlot = -1;
             _remote.Clear();
+            _mainThreadApply.Clear();
+            _mainThreadApplySet.Clear();
             _owned.Clear();
             _ownedScratch.Clear();
             _ownedDirty = false;
             _initialized = false;
         }
 
+        // SyncSlot doubles as the object's index in _remote so membership and removal are O(1)
+        // instead of List.Contains/Remove scans (quadratic across a spawn/ownership storm). Order
+        // in _remote carries no meaning: the layout is rebuilt from it and the transform apply is a
+        // parallel job. _mainThreadApply keeps its order (sequential applies can be hierarchical).
+        private static bool IsRemoteRegistered(BasisSyncedObject obj)
+            => (uint)obj.SyncSlot < (uint)_remote.Count && ReferenceEquals(_remote[obj.SyncSlot], obj);
+
         public static void RegisterRemote(BasisSyncedObject obj)
         {
-            if (obj == null || _remote.Contains(obj)) return;
+            if (obj == null || IsRemoteRegistered(obj)) return;
+            obj.SyncSlot = _remote.Count;
             _remote.Add(obj);
-            if (obj.WantsMainThreadApply && !_mainThreadApply.Contains(obj)) _mainThreadApply.Add(obj);
+            if (obj.WantsMainThreadApply && _mainThreadApplySet.Add(obj)) _mainThreadApply.Add(obj);
             _dirtyLayout = true;
         }
 
         public static void UnregisterRemote(BasisSyncedObject obj)
         {
-            if (obj == null) return;
-            _mainThreadApply.Remove(obj);
-            if (_remote.Remove(obj)) _dirtyLayout = true;
+            if (obj is null) return;
+            if (_mainThreadApplySet.Remove(obj)) _mainThreadApply.Remove(obj);
+            if (!IsRemoteRegistered(obj)) return;
+            int slot = obj.SyncSlot;
+            int last = _remote.Count - 1;
+            if (slot != last)
+            {
+                BasisSyncedObject moved = _remote[last];
+                _remote[slot] = moved;
+                moved.SyncSlot = slot;
+            }
+            _remote.RemoveAt(last);
+            obj.SyncSlot = -1;
+            _dirtyLayout = true;
         }
 
         /// <summary>Live list of remote (interpolated) synced objects, for debug visualisation. Do not mutate.</summary>
@@ -185,7 +210,7 @@ namespace Basis.Scripts.Networking.Sync
             _advanceDelta = deltaTime;
             if (n > 8)
             {
-                System.Threading.Tasks.Parallel.For(0, n, _advanceOptions, _advanceBody);
+                BasisTasks.For(0, n, _advanceOptions, _advanceBody);
             }
             else
             {
@@ -207,20 +232,16 @@ namespace Basis.Scripts.Networking.Sync
                     BasisSyncValues cur = recv.CurrentValues;
                     BasisSyncValues nxt = recv.NextValues;
 
-                    for (int c = 0; c < cc; c++)
-                    {
-                        _contCur[cb + c] = cur.Cont[c];
-                        _contNext[cb + c] = nxt.Cont[c];
-                    }
-                    for (int r = 0; r < rc; r++)
-                    {
-                        _rotCur[rb + r] = cur.Rot[r];
-                        _rotNext[rb + r] = nxt.Rot[r];
-                    }
-                    for (int d = 0; d < dc; d++)
-                    {
-                        _discNext[db + d] = nxt.Disc[d];
-                    }
+                    if (cc > 0) { NativeArray<float>.Copy(cur.Cont, 0, _contCur, cb, cc); NativeArray<float>.Copy(nxt.Cont, 0, _contNext, cb, cc); }
+                    if (rc > 0) { NativeArray<quaternion>.Copy(cur.Rot, 0, _rotCur, rb, rc); NativeArray<quaternion>.Copy(nxt.Rot, 0, _rotNext, rb, rc); }
+                    if (dc > 0) NativeArray<int>.Copy(nxt.Disc, 0, _discNext, db, dc);
+                }
+
+                if (o.JobApplyConditional)
+                {
+                    bool useJob = o.UseJobApplyThisFrame(_discBase[i]);
+                    o.JobAppliedThisFrame = useJob;
+                    _jobApply[i] = (byte)(useJob ? 1 : 0);
                 }
 
                 _t[i] = recv.InterpTime;
@@ -260,6 +281,7 @@ namespace Basis.Scripts.Networking.Sync
                     ContOut = _contOut,
                     RotOut = _rotOut,
                     Active = _active,
+                    JobApply = _jobApply,
                     Bindings = _bindingsArr,
                 };
                 h = apply.Schedule(_taa, h);
@@ -285,7 +307,7 @@ namespace Basis.Scripts.Networking.Sync
             for (int i = 0; i < _mainThreadApply.Count; i++)
             {
                 BasisSyncedObject o = _mainThreadApply[i];
-                if (o != null && !o.JobApplied) o.DriverApply();
+                if (o != null && !(o.JobApplied && o.JobAppliedThisFrame)) o.DriverApply();
             }
         }
 
@@ -536,6 +558,9 @@ namespace Basis.Scripts.Networking.Sync
         internal static int ReadDisc(int idx)
             => (idx >= 0 && _discOut.IsCreated && idx < _discOut.Length) ? _discOut[idx] : 0;
 
+        internal static int ReadDiscNext(int idx)
+            => (idx >= 0 && _discNext.IsCreated && idx < _discNext.Length) ? _discNext[idx] : 0;
+
         private static void RebuildLayout()
         {
             if (_scheduled) { _jobHandle.Complete(); _scheduled = false; }
@@ -591,6 +616,9 @@ namespace Basis.Scripts.Networking.Sync
                 }
 
                 o.JobApplied = false;
+                o.JobApplyConditional = false;
+                o.JobAppliedThisFrame = true;
+                _jobApply[i] = 1;
                 if (o.TryGetJobApplyBinding(out BasisSyncApplyBinding binding, out Transform target, out bool replacesMainThreadApply) && target != null)
                 {
                     binding.Slot = i;
@@ -626,11 +654,12 @@ namespace Basis.Scripts.Networking.Sync
         {
             if (n < 1) n = 1;
             if (_active.IsCreated && _active.Length == n) return;
-            DisposeIf(ref _active); DisposeIf(ref _t);
+            DisposeIf(ref _active); DisposeIf(ref _jobApply); DisposeIf(ref _t);
             DisposeIf(ref _contBase); DisposeIf(ref _contCount);
             DisposeIf(ref _rotBase); DisposeIf(ref _rotCount);
             DisposeIf(ref _discBase); DisposeIf(ref _discCount);
             _active = new NativeArray<byte>(n, Allocator.Persistent);
+            _jobApply = new NativeArray<byte>(n, Allocator.Persistent);
             _t = new NativeArray<float>(n, Allocator.Persistent);
             _contBase = new NativeArray<int>(n, Allocator.Persistent);
             _contCount = new NativeArray<int>(n, Allocator.Persistent);

@@ -4,14 +4,13 @@ using System.Runtime.CompilerServices; // AggressiveInlining
 
 namespace UnityEngine.Rendering.Universal
 {
-#if ENABLE_UPSCALER_FRAMEWORK
     [Obsolete("StpPostProcessPass is replaced by STPIUpscaler #from(6000.3)")]
-#endif
     internal sealed class StpPostProcessPass : PostProcessPass
     {
         public const string k_UpscaledColorTargetName = "CameraColorUpscaledSTP";
         Texture2D[] m_BlueNoise16LTex;
         bool m_IsValid;
+        uint m_WarnCounter;
 
         public StpPostProcessPass(Texture2D[] blueNoise16LTex)
         {
@@ -20,6 +19,8 @@ namespace UnityEngine.Rendering.Universal
             m_BlueNoise16LTex = blueNoise16LTex;
 
             m_IsValid = m_BlueNoise16LTex != null && m_BlueNoise16LTex.Length > 0;
+
+            m_WarnCounter = 0;
         }
 
         public override void Dispose()
@@ -32,11 +33,9 @@ namespace UnityEngine.Rendering.Universal
             if (!m_IsValid)
                 return;
 
-#if ENABLE_UPSCALER_FRAMEWORK
             var postProcessingData = frameData.Get<UniversalPostProcessingData>();
             if (postProcessingData.activeUpscaler != null)
                 return;
-#endif
 
             // Note that enabling jitters uses the same CameraData::IsTemporalAAEnabled(). So if we add any other kind of overrides (like
             // disable useTemporalAA if another feature is disabled) then we need to put it in CameraData::IsTemporalAAEnabled() as opposed
@@ -52,7 +51,7 @@ namespace UnityEngine.Rendering.Universal
             {
                 // Warn users if TAA and STP are disabled despite being requested
                 if (cameraData.IsTemporalAARequested())
-                    TemporalAA.ValidateAndWarn(cameraData, isSTPRequested);
+                    TemporalAA.ValidateAndWarn(cameraData, ref m_WarnCounter, isSTPRequested);
                 return;
             }
 
@@ -76,9 +75,18 @@ namespace UnityEngine.Rendering.Universal
 
             // Update the camera resolution to reflect the upscaled size
             var destDesc = destinationTexture.GetDescriptor(renderGraph);
-            UpscalerPostProcessPass.UpdateCameraResolution(renderGraph, cameraData, new Vector2Int(destDesc.width, destDesc.height));
+            UpscalerPostProcessPass.UpdateCameraResolution(renderGraph, frameData, new Vector2Int(destDesc.width, destDesc.height));
 
             resourceData.cameraColor = destinationTexture;
+
+            // STP only upscales the color channels; rebuild the output alpha from the pre-upscale image.
+            // cameraData.jitter is in NDC space; converting it back to pixels at the rendering resolution
+            // recovers the applied sub-pixel jitter. Negated because the alpha upscale kernel follows
+            // HDRP's jitter sign convention, which is the opposite of URP's (see the IUpscaler sign note
+            // in HDCamera.GetJitteredProjectionMatrix).
+            Vector2 alphaJitter = -0.5f * new Vector2(cameraData.jitter.x * srcDesc.width, cameraData.jitter.y * srcDesc.height);
+            AlphaUpscaleUtils.Execute(renderGraph, cameraData, resourceData, sourceTexture, isTemporalUpscaler: true,
+                new Vector2Int(srcDesc.width, srcDesc.height), new Vector2Int(destDesc.width, destDesc.height), alphaJitter);
         }
 
         [MethodImpl(MethodImplOptions.AggressiveInlining)]

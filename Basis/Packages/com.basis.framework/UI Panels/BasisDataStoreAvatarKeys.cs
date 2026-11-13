@@ -1,10 +1,12 @@
+using Unity.Scripting.LifecycleManagement;
 using System.IO;
 using System.Threading.Tasks;
 using UnityEngine;
 
 namespace Basis.Scripts.UI.UI_Panels
 {
-    public static class BasisDataStoreAvatarKeys
+    [AutoStaticsCleanup]
+    public static partial class BasisDataStoreAvatarKeys
     {
         [System.Serializable]
         public class AvatarKey
@@ -21,6 +23,7 @@ namespace Basis.Scripts.UI.UI_Panels
         }
 
         public static string FilePath = Path.Combine(Application.persistentDataPath, "KeyStore.json");
+        public static bool LoadFailed { get; private set; }
 
         [SerializeField]
         private static AvatarKeys keys = new AvatarKeys { Data = System.Array.Empty<AvatarKey>() };
@@ -76,6 +79,7 @@ namespace Basis.Scripts.UI.UI_Panels
             BasisDebug.Log($"Loading keys from file at path: {FilePath}");
 
             EnsureInit();
+            LoadFailed = false;
 
             if (!File.Exists(FilePath))
             {
@@ -86,7 +90,7 @@ namespace Basis.Scripts.UI.UI_Panels
 
             try
             {
-                byte[] byteData = await File.ReadAllBytesAsync(FilePath);
+                byte[] byteData = await BasisFiles.ReadAllBytesAsync(FilePath);
 
                 // If you actually serialized AvatarKeys before, use this:
                 keys = BasisSerialization.DeserializeValue<AvatarKeys>(byteData);
@@ -102,6 +106,7 @@ namespace Basis.Scripts.UI.UI_Panels
             }
             catch (System.Exception e)
             {
+                LoadFailed = true;
                 BasisDebug.LogError($"Failed to load keys: {e.Message}");
                 keys = new AvatarKeys { Data = System.Array.Empty<AvatarKey>() };
             }
@@ -115,7 +120,7 @@ namespace Basis.Scripts.UI.UI_Panels
             {
                 // Serialize the container (which contains an AvatarKey[]).
                 byte[] byteData = BasisSerialization.SerializeValue(keys);
-                await File.WriteAllBytesAsync(FilePath, byteData);
+                await BasisFiles.WriteAllBytesAsync(FilePath, byteData);
 
                 BasisDebug.Log($"Keys saved to file at: {FilePath}");
             }

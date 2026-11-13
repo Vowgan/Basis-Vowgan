@@ -1,4 +1,5 @@
-﻿using Basis.BasisUI;
+﻿using Unity.Scripting.LifecycleManagement;
+using Basis.BasisUI;
 using Basis.Network.Core;
 using Basis.Scripts.BasisCharacterController;
 using Basis.Scripts.BasisSdk.Players;
@@ -14,7 +15,8 @@ using System.Threading.Tasks;
 using UnityEngine;
 using static BasisNetworkCore.Serializable.SerializableBasis;
 
-public static class BasisNetworkModeration
+[AutoStaticsCleanup]
+public static partial class BasisNetworkModeration
 {
     private static bool ValidateString(string param, string paramName)
     {
@@ -484,6 +486,10 @@ public static class BasisNetworkModeration
                 HandleResourceLimits(reader);
                 break;
 
+            case AdminRequestMode.GlobalGetProtectionSettings:
+                HandleProtectionSettings(reader);
+                break;
+
             case AdminRequestMode.GlobalGetImageBandwidth:
                 HandleImageBandwidth(reader);
                 break;
@@ -562,8 +568,8 @@ public static class BasisNetworkModeration
             {
                 string initiatorName = ResolveDisplayName(initiatorPlayerId);
                 DisplayMessage(enabled
-                    ? $"{initiatorName} enabled announce mode for you - your voice is now broadcast to everyone."
-                    : $"{initiatorName} disabled announce mode for you - your voice is back to normal.");
+                    ? BasisLocalization.Get("settings.admin.notice.announceOn", initiatorName)
+                    : BasisLocalization.Get("settings.admin.notice.announceOff", initiatorName));
             }
         }
         else
@@ -635,8 +641,8 @@ public static class BasisNetworkModeration
             {
                 string initiatorName = ResolveDisplayName(initiatorPlayerId);
                 DisplayMessage(enabled
-                    ? $"{initiatorName} put you in shout mode - your voice now carries twice as far."
-                    : $"{initiatorName} took you out of shout mode - your voice is back to normal.");
+                    ? BasisLocalization.Get("settings.admin.notice.shoutOn", initiatorName)
+                    : BasisLocalization.Get("settings.admin.notice.shoutOff", initiatorName));
             }
         }
         else if (BasisNetworkPlayers.RemotePlayers.TryGetValue(targetPlayerId, out BasisRemotePlayer remote) && remote != null)
@@ -691,7 +697,7 @@ public static class BasisNetworkModeration
             string name = player.SafeDisplayName;
             if (!string.IsNullOrEmpty(name)) return name;
         }
-        return "An admin";
+        return BasisLocalization.Get("settings.admin.notice.unknownAdmin");
     }
 
     /// <summary>
@@ -806,14 +812,14 @@ public static class BasisNetworkModeration
         if (voiceChanged)
         {
             DisplayMessage(voiceMuted
-                ? "A moderator muted your voice - other players cannot hear you until you are unmuted."
-                : "A moderator unmuted your voice - other players can hear you again.");
+                ? BasisLocalization.Get("settings.admin.notice.voiceMuted")
+                : BasisLocalization.Get("settings.admin.notice.voiceUnmuted"));
         }
         if (textChanged)
         {
             DisplayMessage(textMuted
-                ? "A moderator muted your text chat - your messages will not be delivered until you are unmuted."
-                : "A moderator unmuted your text chat - your messages are delivered again.");
+                ? BasisLocalization.Get("settings.admin.notice.textMuted")
+                : BasisLocalization.Get("settings.admin.notice.textUnmuted"));
         }
     }
 
@@ -849,7 +855,7 @@ public static class BasisNetworkModeration
             }
             if (initiatorPlayerId != targetPlayerId)
             {
-                DisplayMessage($"{ResolveDisplayName(initiatorPlayerId)} renamed you to {BasisRemotePlayer.BuildSafeDisplayName(newName)}.");
+                DisplayMessage(BasisLocalization.Get("settings.admin.notice.renamed", ResolveDisplayName(initiatorPlayerId), BasisRemotePlayer.BuildSafeDisplayName(newName)));
             }
         }
         else if (BasisNetworkPlayers.RemotePlayers.TryGetValue(targetPlayerId, out BasisRemotePlayer remote) && remote != null)
@@ -1304,6 +1310,59 @@ public static class BasisNetworkModeration
 
     public static event Action<bool> OnGlobalGifsLockedChanged;
 
+    public static bool GlobalContentRemovalLocked { get; private set; }
+
+    public static event Action<bool> OnGlobalContentRemovalLockedChanged;
+
+    public static bool GlobalExternalLinksLocked { get; private set; }
+
+    public static event Action<bool> OnGlobalExternalLinksLockedChanged;
+
+    public static bool GlobalAvatarHostingLocked { get; private set; }
+
+    public static event Action<bool> OnGlobalAvatarHostingLockedChanged;
+
+    public static bool GlobalVideoClipsLocked { get; private set; }
+
+    public static event Action<bool> OnGlobalVideoClipsLockedChanged;
+
+    public const int MinImageMaxResolutionK = 1;
+    public const int MaxImageMaxResolutionK = 16;
+    public const int DefaultImageMaxResolutionK = 4;
+
+    /// <summary>
+    /// Server-pushed limit on the longest side of a shared image, in units of 1024 pixels (1-16).
+    /// Senders downscale to fit and receivers refuse anything larger. Servers that predate the field
+    /// leave it at <see cref="DefaultImageMaxResolutionK"/>.
+    /// </summary>
+    public static int GlobalImageMaxResolutionK { get; private set; } = DefaultImageMaxResolutionK;
+
+    public static event Action<int> OnGlobalImageMaxResolutionChanged;
+
+    public const int MinVideoClipMaxMegabytes = 16;
+    public const int MaxVideoClipMaxMegabytes = 1024;
+    public const int DefaultVideoClipMaxMegabytes = 96;
+
+    /// <summary>
+    /// Server-pushed limit on the size of a shared video or audio clip, in megabytes (16-1024).
+    /// Servers that predate the field leave it at <see cref="DefaultVideoClipMaxMegabytes"/>.
+    /// </summary>
+    public static int GlobalVideoClipMaxMegabytes { get; private set; } = DefaultVideoClipMaxMegabytes;
+
+    public static event Action<int> OnGlobalVideoClipMaxMegabytesChanged;
+
+    public const int MinVideoClipMaxPerPlayer = 1;
+    public const int MaxVideoClipMaxPerPlayer = 16;
+    public const int DefaultVideoClipMaxPerPlayer = 3;
+
+    /// <summary>
+    /// Server-pushed limit on how many video or audio clips one player may share at once (1-16).
+    /// Servers that predate the field leave it at <see cref="DefaultVideoClipMaxPerPlayer"/>.
+    /// </summary>
+    public static int GlobalVideoClipMaxPerPlayer { get; private set; } = DefaultVideoClipMaxPerPlayer;
+
+    public static event Action<int> OnGlobalVideoClipMaxPerPlayerChanged;
+
     /// <summary>Fired when the text-chat lock flag changes.</summary>
     public static event Action<bool> OnGlobalTextChatLockedChanged;
 
@@ -1426,6 +1485,15 @@ public static class BasisNetworkModeration
 
     public static bool GifsBlockedLocally =>
         GlobalGifsLocked && !LocalPlayerHasGlobalLockBypass();
+
+    public static bool ExternalLinksBlockedLocally =>
+        GlobalExternalLinksLocked && !LocalPlayerHasGlobalLockBypass();
+
+    public static bool AvatarHostingBlockedLocally =>
+        GlobalAvatarHostingLocked && !LocalPlayerHasGlobalLockBypass();
+
+    public static bool VideoClipsBlockedLocally =>
+        GlobalVideoClipsLocked && !LocalPlayerHasGlobalLockBypass();
 
     private static void HandleGlobalLockState(NetDataReader reader)
     {
@@ -1600,7 +1668,70 @@ public static class BasisNetworkModeration
                 OnGlobalGifsLockedChanged?.Invoke(GlobalGifsLocked);
             }
         }
-        BasisDebug.Log($"Global lock state updated - Avatars: {GlobalAvatarsLocked}, Props: {GlobalPropsLocked}, Worlds: {GlobalWorldsLocked}, Servers: {GlobalServersLocked}, ThirdPerson: {GlobalThirdPersonDisabled}, AdditionalAvatarData: {GlobalAdditionalAvatarDataLock}, CameraMask: {GlobalCameraDisallowMask}, Restriction: {GlobalUserRestrictionMode}, PlayspaceMover: {GlobalPlayspaceMoverLocked}, DirectConnect: {GlobalDirectConnectLocked}, Cilbox: {GlobalCilboxLocked}, Images: {GlobalImagesLocked}, EndEffectorIKDisabled: {GlobalEndEffectorIKDisabled}, TextChat: {GlobalTextChatLocked}, VoiceChat: {GlobalVoiceChatLocked}, MediaPlayer: {GlobalMediaPlayerLocked}, CameraCapture: {GlobalCameraCaptureLocked}, PropGrabbing: {GlobalPropGrabbingLocked}, SafeDisplayNames: {GlobalSafeDisplayNamesForced}, Gifs: {GlobalGifsLocked}", BasisDebug.LogTag.Networking);
+        if (reader.AvailableBytes >= 1)
+        {
+            bool nextContentRemovalLocked = reader.GetBool();
+            if (nextContentRemovalLocked != GlobalContentRemovalLocked)
+            {
+                GlobalContentRemovalLocked = nextContentRemovalLocked;
+                OnGlobalContentRemovalLockedChanged?.Invoke(GlobalContentRemovalLocked);
+            }
+        }
+        if (reader.AvailableBytes >= 1)
+        {
+            bool nextExternalLinksLocked = reader.GetBool();
+            if (nextExternalLinksLocked != GlobalExternalLinksLocked)
+            {
+                GlobalExternalLinksLocked = nextExternalLinksLocked;
+                OnGlobalExternalLinksLockedChanged?.Invoke(GlobalExternalLinksLocked);
+            }
+        }
+        if (reader.AvailableBytes >= 1)
+        {
+            bool nextAvatarHostingLocked = reader.GetBool();
+            if (nextAvatarHostingLocked != GlobalAvatarHostingLocked)
+            {
+                GlobalAvatarHostingLocked = nextAvatarHostingLocked;
+                OnGlobalAvatarHostingLockedChanged?.Invoke(GlobalAvatarHostingLocked);
+            }
+        }
+        if (reader.AvailableBytes >= 1)
+        {
+            bool nextVideoClipsLocked = reader.GetBool();
+            if (nextVideoClipsLocked != GlobalVideoClipsLocked)
+            {
+                GlobalVideoClipsLocked = nextVideoClipsLocked;
+                OnGlobalVideoClipsLockedChanged?.Invoke(GlobalVideoClipsLocked);
+            }
+        }
+        if (reader.AvailableBytes >= 1)
+        {
+            int nextImageMaxResolutionK = Mathf.Clamp(reader.GetByte(), MinImageMaxResolutionK, MaxImageMaxResolutionK);
+            if (nextImageMaxResolutionK != GlobalImageMaxResolutionK)
+            {
+                GlobalImageMaxResolutionK = nextImageMaxResolutionK;
+                OnGlobalImageMaxResolutionChanged?.Invoke(GlobalImageMaxResolutionK);
+            }
+        }
+        if (reader.AvailableBytes >= 2)
+        {
+            int nextVideoClipMaxMegabytes = Mathf.Clamp(reader.GetUShort(), MinVideoClipMaxMegabytes, MaxVideoClipMaxMegabytes);
+            if (nextVideoClipMaxMegabytes != GlobalVideoClipMaxMegabytes)
+            {
+                GlobalVideoClipMaxMegabytes = nextVideoClipMaxMegabytes;
+                OnGlobalVideoClipMaxMegabytesChanged?.Invoke(GlobalVideoClipMaxMegabytes);
+            }
+        }
+        if (reader.AvailableBytes >= 1)
+        {
+            int nextVideoClipMaxPerPlayer = Mathf.Clamp(reader.GetByte(), MinVideoClipMaxPerPlayer, MaxVideoClipMaxPerPlayer);
+            if (nextVideoClipMaxPerPlayer != GlobalVideoClipMaxPerPlayer)
+            {
+                GlobalVideoClipMaxPerPlayer = nextVideoClipMaxPerPlayer;
+                OnGlobalVideoClipMaxPerPlayerChanged?.Invoke(GlobalVideoClipMaxPerPlayer);
+            }
+        }
+        BasisDebug.Log($"Global lock state updated - Avatars: {GlobalAvatarsLocked}, Props: {GlobalPropsLocked}, Worlds: {GlobalWorldsLocked}, Servers: {GlobalServersLocked}, ThirdPerson: {GlobalThirdPersonDisabled}, AdditionalAvatarData: {GlobalAdditionalAvatarDataLock}, CameraMask: {GlobalCameraDisallowMask}, Restriction: {GlobalUserRestrictionMode}, PlayspaceMover: {GlobalPlayspaceMoverLocked}, DirectConnect: {GlobalDirectConnectLocked}, Cilbox: {GlobalCilboxLocked}, Images: {GlobalImagesLocked}, EndEffectorIKDisabled: {GlobalEndEffectorIKDisabled}, TextChat: {GlobalTextChatLocked}, VoiceChat: {GlobalVoiceChatLocked}, MediaPlayer: {GlobalMediaPlayerLocked}, CameraCapture: {GlobalCameraCaptureLocked}, PropGrabbing: {GlobalPropGrabbingLocked}, SafeDisplayNames: {GlobalSafeDisplayNamesForced}, Gifs: {GlobalGifsLocked}, ContentRemoval: {GlobalContentRemovalLocked}, ExternalLinks: {GlobalExternalLinksLocked}, AvatarHosting: {GlobalAvatarHostingLocked}, VideoClips: {GlobalVideoClipsLocked}, ImageMaxResolution: {GlobalImageMaxResolutionK}K, VideoClipMax: {GlobalVideoClipMaxMegabytes} MB x{GlobalVideoClipMaxPerPlayer}", BasisDebug.LogTag.Networking);
         OnGlobalLockStateChanged?.Invoke(GlobalAvatarsLocked, GlobalPropsLocked, GlobalWorldsLocked, GlobalServersLocked);
     }
 
@@ -1633,6 +1764,13 @@ public static class BasisNetworkModeration
         if (GlobalPropGrabbingLocked) { GlobalPropGrabbingLocked = false; OnGlobalPropGrabbingLockedChanged?.Invoke(false); }
         if (GlobalSafeDisplayNamesForced) { GlobalSafeDisplayNamesForced = false; OnGlobalSafeDisplayNamesForcedChanged?.Invoke(false); }
         if (GlobalGifsLocked) { GlobalGifsLocked = false; OnGlobalGifsLockedChanged?.Invoke(false); }
+        if (GlobalContentRemovalLocked) { GlobalContentRemovalLocked = false; OnGlobalContentRemovalLockedChanged?.Invoke(false); }
+        if (GlobalExternalLinksLocked) { GlobalExternalLinksLocked = false; OnGlobalExternalLinksLockedChanged?.Invoke(false); }
+        if (GlobalAvatarHostingLocked) { GlobalAvatarHostingLocked = false; OnGlobalAvatarHostingLockedChanged?.Invoke(false); }
+        if (GlobalVideoClipsLocked) { GlobalVideoClipsLocked = false; OnGlobalVideoClipsLockedChanged?.Invoke(false); }
+        if (GlobalImageMaxResolutionK != DefaultImageMaxResolutionK) { GlobalImageMaxResolutionK = DefaultImageMaxResolutionK; OnGlobalImageMaxResolutionChanged?.Invoke(DefaultImageMaxResolutionK); }
+        if (GlobalVideoClipMaxMegabytes != DefaultVideoClipMaxMegabytes) { GlobalVideoClipMaxMegabytes = DefaultVideoClipMaxMegabytes; OnGlobalVideoClipMaxMegabytesChanged?.Invoke(DefaultVideoClipMaxMegabytes); }
+        if (GlobalVideoClipMaxPerPlayer != DefaultVideoClipMaxPerPlayer) { GlobalVideoClipMaxPerPlayer = DefaultVideoClipMaxPerPlayer; OnGlobalVideoClipMaxPerPlayerChanged?.Invoke(DefaultVideoClipMaxPerPlayer); }
 
         if (GlobalEndEffectorIKDisabled)
         {
@@ -1820,6 +1958,26 @@ public static class BasisNetworkModeration
         SendAdminRequest(AdminRequestMode.GlobalToggleGifs);
     }
 
+    public static void GlobalToggleContentRemoval()
+    {
+        SendAdminRequest(AdminRequestMode.GlobalToggleContentRemoval);
+    }
+
+    public static void GlobalToggleExternalLinks()
+    {
+        SendAdminRequest(AdminRequestMode.GlobalToggleExternalLinks);
+    }
+
+    public static void GlobalToggleAvatarHosting()
+    {
+        SendAdminRequest(AdminRequestMode.GlobalToggleAvatarHosting);
+    }
+
+    public static void GlobalToggleVideoClips()
+    {
+        SendAdminRequest(AdminRequestMode.GlobalToggleVideoClips);
+    }
+
     /// <summary>
     /// Admin: toggle remote end-effector IK anchoring server-wide. Server flips the flag and
     /// broadcasts the new lock state; every client mirrors it onto BasisNetworkReceiver.
@@ -1834,6 +1992,24 @@ public static class BasisNetworkModeration
     /// that embedding category for every client. The server stores it and rebroadcasts it
     /// in GlobalGetLockState.
     /// </summary>
+    public static void SetGlobalImageMaxResolution(int k)
+    {
+        byte clamped = (byte)Mathf.Clamp(k, MinImageMaxResolutionK, MaxImageMaxResolutionK);
+        SendAdminRequest(AdminRequestMode.SetGlobalImageMaxResolution, w => w.Put(clamped));
+    }
+
+    public static void SetGlobalVideoClipMaxMegabytes(int megabytes)
+    {
+        ushort clamped = (ushort)Mathf.Clamp(megabytes, MinVideoClipMaxMegabytes, MaxVideoClipMaxMegabytes);
+        SendAdminRequest(AdminRequestMode.SetGlobalVideoClipMaxSize, w => w.Put(clamped));
+    }
+
+    public static void SetGlobalVideoClipMaxPerPlayer(int count)
+    {
+        byte clamped = (byte)Mathf.Clamp(count, MinVideoClipMaxPerPlayer, MaxVideoClipMaxPerPlayer);
+        SendAdminRequest(AdminRequestMode.SetGlobalVideoClipMaxPerPlayer, w => w.Put(clamped));
+    }
+
     public static void SetGlobalCameraPolicy(byte disallowMask)
     {
         SendAdminRequest(
@@ -1942,13 +2118,38 @@ public static class BasisNetworkModeration
 
     /// <summary>Server-pushed cap on active content-share spheres per player.</summary>
     public static int ServerMaxContentSpheresPerPlayer { get; private set; } = 32;
+    public static int ServerContentSphereLeaveTimeoutSeconds { get; private set; } = 60;
+    public static int ServerContentSphereDeletionTimerSeconds { get; private set; } = 0;
 
     /// <summary>Fired when the server pushes new resource limits (spheres/player).</summary>
     public static event Action<int> OnResourceLimitsChanged;
 
+    public static List<BasisProtectionSettings.Info> ServerProtectionSettings { get; private set; } = new List<BasisProtectionSettings.Info>();
+    public static event Action<List<BasisProtectionSettings.Info>> OnProtectionSettingsChanged;
+
+    private static void HandleProtectionSettings(NetDataReader reader)
+    {
+        if (!BasisProtectionSettings.TryRead(reader, out List<BasisProtectionSettings.Info> infos)) return;
+        ServerProtectionSettings = infos;
+        OnProtectionSettingsChanged?.Invoke(infos);
+    }
+
+    public static void RequestProtectionSettings() => SendAdminRequest(AdminRequestMode.GetProtectionSettings);
+
+    public static void SetProtectionSettings(List<KeyValuePair<string, double>> changes)
+    {
+        if (changes == null || changes.Count == 0) return;
+        SendAdminRequest(AdminRequestMode.SetProtectionSettings, w => BasisProtectionSettings.WriteChanges(w, changes));
+    }
+
     private static void HandleResourceLimits(NetDataReader reader)
     {
         ServerMaxContentSpheresPerPlayer = reader.GetInt();
+        if (reader.AvailableBytes >= sizeof(int) * 2)
+        {
+            ServerContentSphereLeaveTimeoutSeconds = reader.GetInt();
+            ServerContentSphereDeletionTimerSeconds = reader.GetInt();
+        }
         OnResourceLimitsChanged?.Invoke(ServerMaxContentSpheresPerPlayer);
     }
 
@@ -1956,12 +2157,16 @@ public static class BasisNetworkModeration
     /// Admin: set the server-wide resource caps (content spheres per player).
     /// Persisted to config.xml and broadcast to every admin panel.
     /// </summary>
-    public static void SetGlobalResourceLimits(int maxContentSpheresPerPlayer)
+    public static void SetGlobalResourceLimits(int maxContentSpheresPerPlayer, int contentSphereLeaveTimeoutSeconds, int contentSphereDeletionTimerSeconds)
     {
         if (maxContentSpheresPerPlayer < 1) maxContentSpheresPerPlayer = 1;
+        if (contentSphereLeaveTimeoutSeconds < 0) contentSphereLeaveTimeoutSeconds = 0;
+        if (contentSphereDeletionTimerSeconds < 0) contentSphereDeletionTimerSeconds = 0;
         SendAdminRequest(
             AdminRequestMode.SetGlobalResourceLimits,
-            w => w.Put(maxContentSpheresPerPlayer));
+            w => w.Put(maxContentSpheresPerPlayer),
+            w => w.Put(contentSphereLeaveTimeoutSeconds),
+            w => w.Put(contentSphereDeletionTimerSeconds));
     }
 
     /// <summary>Server-pushed BSR reduction settings. Mirror of the config.xml BSR block; populated on connect and on every admin change.</summary>

@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.IK;
 using Basis.Scripts.Device_Management;
 using Basis.Scripts.Device_Management.Devices;
@@ -7,10 +8,11 @@ using Unity.Burst;
 using Unity.Collections;
 using Unity.Jobs;
 using UnityEngine;
-public static class BasisBodyEvidenceSampler
+[AutoStaticsCleanup]
+public static partial class BasisBodyEvidenceSampler
 {
     public const int FrameInterval = 5;
-    static NativeReference<BasisBodyEvidenceState> sstate;
+    [NoAutoStaticsCleanup] static NativeReference<BasisBodyEvidenceState> sstate;
     static JobHandle handle;
     static bool scheduled;
     static bool allocated;
@@ -137,18 +139,8 @@ public static class BasisBodyEvidenceSampler
             }
         }
 
-        if (manager.FindDevice(out BasisInput left, BasisBoneTrackedRole.LeftHand) && manager.FindDevice(out BasisInput right, BasisBoneTrackedRole.RightHand))
-        {
-            Vector3 l = HandSpanPoint(left);
-            Vector3 r = HandSpanPoint(right);
-            if (l.sqrMagnitude > 1e-4f && r.sqrMagnitude > 1e-4f)
-            {
-                sample.HandSpan = Vector3.Distance(new Vector3(l.x, 0f, l.z), new Vector3(r.x, 0f, r.z));
-                sample.HandsValid = sample.HandSpan > 0f;
-            }
-        }
-
-        if (!sample.HeadValid && !sample.HandsValid)
+        // Only the eye height is observed: arm span is estimated from height, never measured.
+        if (!sample.HeadValid)
         {
             return false;
         }
@@ -176,7 +168,6 @@ public static class BasisBodyEvidenceSampler
         }
         return true;
     }
-    static Vector3 HandSpanPoint(BasisInput input) => input is BasisInputController controller ? controller.UnscaledHandTarget : input.UnscaledDeviceCoord.position;
     public static bool TryGetEyeHeight(out float eyeHeight, out float confidence)
     {
         eyeHeight = 0f;
@@ -189,18 +180,6 @@ public static class BasisBodyEvidenceSampler
         BasisBodyEvidenceState state = sstate.Value;
         return BasisBodyEvidenceCore.TryGetEstimate(state.Eye, out eyeHeight, out confidence);
     }
-    public static bool TryGetArmSpan(out float armSpan, out float confidence)
-    {
-        armSpan = 0f;
-        confidence = 0f;
-        if (!allocated)
-        {
-            return false;
-        }
-        CompleteIfPending();
-        BasisBodyEvidenceState state = sstate.Value;
-        return BasisBodyEvidenceCore.TryGetEstimate(state.ArmSpan, out armSpan, out confidence);
-    }
     public static bool LooksLikeADifferentPerson()
     {
         if (!allocated)
@@ -211,10 +190,9 @@ public static class BasisBodyEvidenceSampler
         BasisBodyEvidenceState state = sstate.Value;
         return BasisBodyEvidenceCore.LooksLikeADifferentPerson(state.Eye);
     }
-    public static void GetSampleCounts(out int eyeSamples, out int spanSamples)
+    public static void GetSampleCounts(out int eyeSamples)
     {
         eyeSamples = 0;
-        spanSamples = 0;
         if (!allocated)
         {
             return;
@@ -222,7 +200,6 @@ public static class BasisBodyEvidenceSampler
         CompleteIfPending();
         BasisBodyEvidenceState state = sstate.Value;
         eyeSamples = state.Eye.SampleCount;
-        spanSamples = state.ArmSpan.SampleCount;
     }
     [BurstCompile]
     struct BasisBodyEvidenceJob : IJob

@@ -1,3 +1,5 @@
+using Basis.Scripts.Platform;
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Basis.BasisUI
@@ -15,7 +17,15 @@ namespace Basis.BasisUI
         public static void Copy(string value)
         {
             GUIUtility.systemCopyBuffer = value ?? string.Empty;
+#if UNITY_WEBGL && !UNITY_EDITOR
+            BasisWebClipboard_Copy(value ?? string.Empty);
+#endif
         }
+
+#if UNITY_WEBGL && !UNITY_EDITOR
+        [System.Runtime.InteropServices.DllImport("__Internal")]
+        private static extern void BasisWebClipboard_Copy(string text);
+#endif
 
         public static void Copy(string value, PanelElementDescriptor confirmOn)
         {
@@ -34,5 +44,9 @@ namespace Basis.BasisUI
             if (!descriptor) return;
             descriptor.FlashTitle(BasisLocalization.Get("ui.copied"), ConfirmSeconds);
         }
+
+        public static bool CanCopyImages => BasisDesktopClipboard.CanCopyImages;
+
+        public static bool CopyImage(IReadOnlyList<BasisClipboardImage> formats) => BasisDesktopClipboard.CopyImage(formats);
     }
 }

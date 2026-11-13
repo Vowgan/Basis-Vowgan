@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using System;
 using System.Collections.Generic;
 using System.Globalization;
@@ -8,9 +9,10 @@ using Basis.Scripts.BasisSdk.Highlight;
 using Basis.Scripts.Networking;
 using Basis.Scripts.Rendering;
 using Unity.Profiling;
+using Unity.Profiling.LowLevel;
 using Unity.Profiling.LowLevel.Unsafe;
 using UnityEngine;
-#if BASIS_HAS_RTAO && !UNITY_ANDROID
+#if BASIS_HAS_RTAO && !UNITY_ANDROID && !UNITY_WEBGL
 using Basis.Rendering.RTAO;
 #endif
 
@@ -22,7 +24,8 @@ namespace Basis.Scripts.Drivers
     /// one EMA-smoothed instant per segment for a live HUD, this records every sampled frame into a
     /// fixed-size buffer for the capture window and reports min/avg/median/p95/max/stddev.
     /// </summary>
-    public static class BasisRenderProfileHistory
+    [AutoStaticsCleanup]
+    public static partial class BasisRenderProfileHistory
     {
         public const int DefaultFrames = 300;
         private const double NsToMs = 1.0 / 1_000_000.0;
@@ -30,7 +33,7 @@ namespace Basis.Scripts.Drivers
             ProfilerRecorderOptions.WrapAroundWhenCapacityReached |
             ProfilerRecorderOptions.StartImmediately |
             ProfilerRecorderOptions.SumAllSamplesInFrame;
-        private static readonly string[] AlwaysIncludeMarkerPrefixes = { "BasisVisibility.", "BasisNamePlate." };
+        [NoAutoStaticsCleanup] private static readonly string[] AlwaysIncludeMarkerPrefixes = { "BasisVisibility.", "BasisNamePlate." };
         private const int MaxDiscoveredMarkers = 500;
         private const int TopMarkerReportCount = 25;
         // Found by inspecting real captures, not derivable from the API: these enumerate as
@@ -39,7 +42,7 @@ namespace Basis.Scripts.Drivers
         // the smaller ones (EngineJob ~9ms, WaitForTargetFPS ~3ms — both plausible-looking but still
         // not real per-frame cost). This list is necessarily incomplete; expect to extend it as new
         // ones turn up in future captures rather than treating it as exhaustive.
-        private static readonly string[] ExcludedMarkerNames =
+        [NoAutoStaticsCleanup] private static readonly string[] ExcludedMarkerNames =
         {
             "BeginJob", "EndJob", "ScheduleJob", "WaitForCompleted", "ScheduleAllocJob", "KickJobs",
             "Idle", "Semaphore.WaitForSignal", "EngineJob", "WaitForTargetFPS",
@@ -78,10 +81,11 @@ namespace Basis.Scripts.Drivers
         private static Action<string> onComplete;
         private static BasisFrameBottleneckReading lastReading;
         private static List<Series> frameSeries, gpuSeries, cpuSeries, invocationSeries;
-        private static List<MarkerSeries> markerSeries;
+        private static List<MarkerSeries> markerSeries, gpuMarkerSeries;
         private static readonly List<ProfilerRecorderHandle> handleScratch = new List<ProfilerRecorderHandle>(1024);
 
         public static bool IsCapturing => capturing;
+        public static bool Lite;
         public static string LastWrittenPath { get; private set; }
 
         /// <summary>
@@ -108,9 +112,13 @@ namespace Basis.Scripts.Drivers
             BuildGpuSeries(framesTarget);
             BuildCpuSeries(framesTarget);
             BuildInvocationSeries(framesTarget);
-            DiscoverMarkerSeries(framesTarget);
-
-            BasisPerformanceBarData.AddSubscriber();
+            markerSeries = new List<MarkerSeries>();
+            gpuMarkerSeries = new List<MarkerSeries>();
+            if (!Lite)
+            {
+                DiscoverMarkerSeries(framesTarget);
+                BasisPerformanceBarData.AddSubscriber();
+            }
             BasisFrameClock.AddRequest();
             BasisFrameClock.OnTick += OnTick;
             return true;
@@ -140,7 +148,8 @@ namespace Basis.Scripts.Drivers
 
         private static void OnTick()
         {
-            BasisPerformanceBarData.Sample();
+            if (Lite) BasisFrameBottleneck.Sample();
+            else BasisPerformanceBarData.Sample();
             lastReading = BasisFrameBottleneck.Read();
             PushAll(frameSeries);
             PushAll(gpuSeries);
@@ -168,13 +177,19 @@ namespace Basis.Scripts.Drivers
                 if (!m.Recorder.Valid || m.Recorder.Count == 0 || m.Count >= m.Values.Length) continue;
                 m.Values[m.Count++] = (float)(m.Recorder.GetSample(m.Recorder.Count - 1).Value * NsToMs);
             }
+            for (int i = 0; i < gpuMarkerSeries.Count; i++)
+            {
+                MarkerSeries m = gpuMarkerSeries[i];
+                if (!m.Recorder.Valid || m.Count >= m.Values.Length) continue;
+                m.Values[m.Count++] = (float)(m.Recorder.LastValue * NsToMs);
+            }
         }
 
         private static void FinishCapture()
         {
             BasisFrameClock.OnTick -= OnTick;
             BasisFrameClock.RemoveRequest();
-            BasisPerformanceBarData.RemoveSubscriber();
+            if (!Lite) BasisPerformanceBarData.RemoveSubscriber();
             DisposeMarkers();
             capturing = false;
 
@@ -210,7 +225,7 @@ namespace Basis.Scripts.Drivers
             AddGpuSegment(BasisPerformanceGpuSegment.Opaque, "Opaque", capacity);
             AddGpuSegment(BasisPerformanceGpuSegment.Transparent, "Transparent", capacity);
             AddGpuSegment(BasisPerformanceGpuSegment.Other, "Other", capacity);
-#if BASIS_HAS_GI && !UNITY_ANDROID
+#if BASIS_HAS_GI && !UNITY_ANDROID && !UNITY_WEBGL
             AddGpuSegment(BasisPerformanceGpuSegment.GlobalIllumination, "GlobalIllumination", capacity);
             gpuSeries.Add(new Series("GI RayPrepass", "GlobalIllumination", () => BasisGlobalIlluminationPass.GpuMsRayPrepass, capacity));
             gpuSeries.Add(new Series("GI RayTrace", "GlobalIllumination", () => BasisGlobalIlluminationPass.GpuMsRayTrace, capacity));
@@ -231,7 +246,7 @@ namespace Basis.Scripts.Drivers
             gpuSeries.Add(new Series("Reflections Upsample", "Reflections", () => BasisGlobalIlluminationPass.SpecularPass.GpuMsUpsample, capacity));
             gpuSeries.Add(new Series("Reflections Publish", "Reflections", () => BasisGlobalIlluminationPass.SpecularPass.GpuMsPublish, capacity));
 #endif
-#if BASIS_HAS_RTAO && !UNITY_ANDROID
+#if BASIS_HAS_RTAO && !UNITY_ANDROID && !UNITY_WEBGL
             AddGpuSegment(BasisPerformanceGpuSegment.Rtao, "Rtao", capacity);
             gpuSeries.Add(new Series("Rtao AfterOpaque", "Rtao", () => BasisRTAOAfterOpaquePass.GpuMs, capacity));
 #endif
@@ -262,10 +277,10 @@ namespace Basis.Scripts.Drivers
         private static void BuildInvocationSeries(int capacity)
         {
             invocationSeries = new List<Series>(3);
-#if BASIS_HAS_RTAO && !UNITY_ANDROID
+#if BASIS_HAS_RTAO && !UNITY_ANDROID && !UNITY_WEBGL
             invocationSeries.Add(new Series("Rtao", "Rtao", () => BasisRTAOPass.InvocationsThisFrame, capacity));
 #endif
-#if BASIS_HAS_GI && !UNITY_ANDROID
+#if BASIS_HAS_GI && !UNITY_ANDROID && !UNITY_WEBGL
             invocationSeries.Add(new Series("GlobalIllumination", "GlobalIllumination", () => BasisGlobalIlluminationPass.InvocationsThisFrame, capacity));
             invocationSeries.Add(new Series("Reflections", "Reflections", () => BasisGlobalIlluminationPass.SpecularPass.InvocationsThisFrame, capacity));
 #endif
@@ -285,13 +300,21 @@ namespace Basis.Scripts.Drivers
         private static void DiscoverMarkerSeries(int capacity)
         {
             markerSeries = new List<MarkerSeries>(64);
+            gpuMarkerSeries = new List<MarkerSeries>(64);
             handleScratch.Clear();
             ProfilerRecorderHandle.GetAvailable(handleScratch);
-            for (int h = 0; h < handleScratch.Count && markerSeries.Count < MaxDiscoveredMarkers; h++)
+            for (int h = 0; h < handleScratch.Count; h++)
             {
                 ProfilerRecorderHandle handle = handleScratch[h];
                 ProfilerRecorderDescription desc = ProfilerRecorderHandle.GetDescription(handle);
                 if (desc.UnitType != ProfilerMarkerDataUnit.TimeNanoseconds) continue;
+                if ((desc.Flags & MarkerFlags.SampleGPU) != 0 && gpuMarkerSeries.Count < MaxDiscoveredMarkers)
+                {
+                    MarkerSeries gpu = new MarkerSeries(desc.Name, capacity);
+                    try { gpu.Recorder = new ProfilerRecorder(handle, 1, MarkerOptions | ProfilerRecorderOptions.GpuRecorder); gpuMarkerSeries.Add(gpu); }
+                    catch { }
+                }
+                if (markerSeries.Count >= MaxDiscoveredMarkers) continue;
 
                 MarkerSeries series = new MarkerSeries(desc.Name, capacity);
                 try { series.Recorder = new ProfilerRecorder(handle, 1, MarkerOptions); }
@@ -332,6 +355,18 @@ namespace Basis.Scripts.Drivers
             return always;
         }
 
+        private static List<MarkerSeries> SelectReportedGpuMarkers()
+        {
+            List<MarkerSeries> active = new List<MarkerSeries>();
+            for (int i = 0; i < gpuMarkerSeries.Count; i++)
+            {
+                MarkerSeries m = gpuMarkerSeries[i];
+                if (Compute(m.Values, m.Count).Max > 0f) active.Add(m);
+            }
+            active.Sort((a, b) => Compute(b.Values, b.Count).Avg.CompareTo(Compute(a.Values, a.Count).Avg));
+            return active;
+        }
+
         private static string CategoryFor(string markerName)
         {
             for (int p = 0; p < AlwaysIncludeMarkerPrefixes.Length; p++)
@@ -345,6 +380,8 @@ namespace Basis.Scripts.Drivers
         {
             for (int i = 0; i < markerSeries.Count; i++)
                 if (markerSeries[i].Recorder.Valid) markerSeries[i].Recorder.Dispose();
+            for (int i = 0; i < gpuMarkerSeries.Count; i++)
+                if (gpuMarkerSeries[i].Recorder.Valid) gpuMarkerSeries[i].Recorder.Dispose();
         }
 
         private static Stat Compute(float[] values, int count)
@@ -424,11 +461,12 @@ namespace Basis.Scripts.Drivers
             sb.Append("  \"qualityTier\": \"").Append(QualityTierName(BasisQualityTier.Current)).Append("\",\n");
             sb.Append("  \"performanceModeActive\": ").Append(BasisPerformanceMode.IsActive ? "true" : "false").Append(",\n");
             sb.Append("  \"performanceModeLevel\": \"").Append(BasisPerformanceMode.ActiveLevel).Append("\",\n");
-#if BASIS_HAS_GI && !UNITY_ANDROID
+#if BASIS_HAS_GI && !UNITY_ANDROID && !UNITY_WEBGL
             sb.Append("  \"giQuality\": \"").Append(BasisGlobalIlluminationSettings.Current.quality).Append("\",\n");
 #endif
             sb.Append("  \"remoteAvatarCount\": ").Append(BasisNetworkPlayers.ReceiverCount).Append(",\n");
             sb.Append("  \"sampleFrames\": ").Append(framesDone).Append(",\n");
+            sb.Append("  \"lite\": ").Append(Lite ? "true" : "false").Append(",\n");
 
             sb.Append("  \"frameTiming\": {\n");
             for (int i = 0; i < frameSeries.Count; i++)
@@ -448,6 +486,18 @@ namespace Basis.Scripts.Drivers
                 AppendStat(sb, Compute(s.Values, s.Count), ci);
                 sb.Append("}");
                 sb.Append(i == gpuSeries.Count - 1 ? "\n" : ",\n");
+            }
+            sb.Append("  ],\n");
+
+            sb.Append("  \"gpuMarkers\": [\n");
+            List<MarkerSeries> reportedGpuMarkers = SelectReportedGpuMarkers();
+            for (int i = 0; i < reportedGpuMarkers.Count; i++)
+            {
+                MarkerSeries m = reportedGpuMarkers[i];
+                sb.Append("    {\"name\":\"").Append(EscapeJson(m.Name)).Append("\",\"gpuMs\":");
+                AppendStat(sb, Compute(m.Values, m.Count), ci);
+                sb.Append("}");
+                sb.Append(i == reportedGpuMarkers.Count - 1 ? "\n" : ",\n");
             }
             sb.Append("  ],\n");
 
@@ -527,6 +577,16 @@ namespace Basis.Scripts.Drivers
 
             sb.AppendLine("## GPU passes (ms)");
             AppendStatTable(sb, gpuSeries, ci);
+
+            sb.AppendLine("## GPU markers (ms, every sampled marker, parents overlap children)");
+            sb.AppendLine("| Name | Avg | Median | P95 | Max | Samples |");
+            sb.AppendLine("|---|---:|---:|---:|---:|---:|");
+            List<MarkerSeries> reportedGpuMarkers = SelectReportedGpuMarkers();
+            for (int i = 0; i < reportedGpuMarkers.Count; i++)
+            {
+                AppendStatRow(sb, reportedGpuMarkers[i].Name, Compute(reportedGpuMarkers[i].Values, reportedGpuMarkers[i].Count), ci);
+            }
+            sb.AppendLine();
 
             sb.AppendLine("## Invocations per frame");
             AppendStatTable(sb, invocationSeries, ci);

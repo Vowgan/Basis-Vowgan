@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Basis;
 using Basis.BasisUI;
 using Basis.Scripts.BasisSdk.Players;
 using HVR.Vixxy;
@@ -10,7 +11,7 @@ namespace HVR.Basis.Comms
 {
     /// <summary>
     /// Registers the face- and eye-tracking diagnostic builders into the
-    /// framework's Developer tab. The framework owns the collapsible sections
+    /// framework's Tracker Settings tab. The framework owns the collapsible sections
     /// and calls these builders each time one is expanded; this package fills
     /// them in with the live state of the HVR pipeline components.
     /// </summary>
@@ -63,6 +64,7 @@ namespace HVR.Basis.Comms
         static void BuildAvatarCustomizationSection(RectTransform parent)
         {
             InitializeVixxyPanel(parent);
+            InitializeFacePanel(parent);
             InitializeEyeTrackingPanel(parent);
         }
 
@@ -78,13 +80,13 @@ namespace HVR.Basis.Comms
             FaceTrackingActivityRelay relay = avatar != null
                 ? avatar.GetComponentInChildren<FaceTrackingActivityRelay>(true)
                 : null;
-            ftActive.SetDescription(relay != null ? relay.IsTrackingActive.ToString() : "No relay found");
+            ftActive.SetDescription(relay != null ? YesNo(relay.IsTrackingActive) : BasisLocalization.Get("settings.faceTracking.noRelay"));
 
             OSCAcquisition oscAcq = avatar != null
                 ? avatar.GetComponentInChildren<OSCAcquisition>(true)
                 : null;
             if (oscAcq != null)
-                oscAcquisition.SetDescription(oscAcq.isActiveAndEnabled ? "Active" : "DISABLED");
+                oscAcquisition.SetDescription(BasisLocalization.Get(oscAcq.isActiveAndEnabled ? "settings.faceTracking.oscActive" : "settings.faceTracking.oscDisabled"));
             else
                 oscAcquisition.SetDescription(BasisLocalization.Get("settings.faceTracking.noComponent"));
 
@@ -93,7 +95,7 @@ namespace HVR.Basis.Comms
                 : null;
             if (blendshape != null)
             {
-                blendshapeActive.SetDescription(blendshape.IsTrackingActive.ToString());
+                blendshapeActive.SetDescription(YesNo(blendshape.IsTrackingActive));
                 int addressCount = blendshape.debugAddresses != null ? blendshape.debugAddresses.Length : 0;
                 actuatedAddresses.SetDescription(addressCount.ToString());
             }
@@ -115,15 +117,15 @@ namespace HVR.Basis.Comms
             BasisLocalPlayer localPlayer = BasisLocalPlayer.Instance;
             var avatar = localPlayer != null ? localPlayer.BasisAvatar : null;
 
-            eyeOverride.SetDescription(BasisLocalEyeDriver.Override.ToString());
-            eyeDriverEnabled.SetDescription(BasisLocalEyeDriver.IsEnabled.ToString());
+            eyeOverride.SetDescription(YesNo(BasisLocalEyeDriver.Override));
+            eyeDriverEnabled.SetDescription(YesNo(BasisLocalEyeDriver.IsEnabled));
 
             EyeTrackingBoneActuation eyeActuation = avatar != null
                 ? avatar.GetComponentInChildren<EyeTrackingBoneActuation>(true)
                 : null;
             if (eyeActuation != null)
             {
-                eyeParamsActive.SetDescription(eyeActuation.IsEyeTrackingParametersActive.ToString());
+                eyeParamsActive.SetDescription(YesNo(eyeActuation.IsEyeTrackingParametersActive));
                 eyeLeftX.SetDescription(eyeActuation._fEyeLeftX.ToString("F3"));
                 eyeRightX.SetDescription(eyeActuation._fEyeRightX.ToString("F3"));
                 eyeY.SetDescription(eyeActuation._fEyeY.ToString("F3"));
@@ -137,12 +139,32 @@ namespace HVR.Basis.Comms
             }
         }
 
+        static string YesNo(bool value) => BasisLocalization.Get(value ? "ui.yes" : "ui.no");
+
         static PanelElementDescriptor CreateInfoField(RectTransform parent, string title, string initialValue)
         {
             PanelElementDescriptor field = PanelElementDescriptor.CreateNew(PanelElementDescriptor.ElementStyles.Group, parent);
             field.SetTitle(title);
             field.SetDescription(initialValue);
             return field;
+        }
+
+        private static void InitializeFacePanel(RectTransform container)
+        {
+            var sectionToggle = PanelSectionToggle.CreateNewEntry(container);
+            var faceGroup = PanelSectionToggleHelpers.CreateCollapsibleContentGroup(sectionToggle, container, BasisLocalization.Get("settings.myAvatar.face"));
+            faceGroup.SetDescription(BasisLocalization.Get("settings.myAvatar.face.description"));
+            BuildBindingToggle(faceGroup, "settings.myAvatar.autoDetectFaceTracking", BasisSettingsDefaults.AutoDetectFaceTracking);
+            BuildBindingToggle(faceGroup, "settings.myAvatar.idleExpressions", BasisSettingsDefaults.IdleFaceExpressions);
+            PanelSectionToggleHelpers.FinalizeCollapsibleGroup(sectionToggle, faceGroup, true);
+        }
+
+        private static void BuildBindingToggle(PanelElementDescriptor group, string key, BasisSettingsBinding<bool> binding)
+        {
+            var toggle = PanelToggle.CreateNewEntry(group.ContentParent);
+            toggle.Descriptor.SetTitle(BasisLocalization.Get(key));
+            toggle.Descriptor.SetDescription(BasisLocalization.Get(key + ".description"));
+            toggle.AssignBinding(binding);
         }
 
         private static void InitializeVixxyPanel(RectTransform container)
@@ -197,15 +219,41 @@ namespace HVR.Basis.Comms
         {
             var localPlayer = BasisLocalPlayer.Instance;
             var avatar = localPlayer?.BasisAvatar;
-            if (avatar == null) return;
-
-            var eyeActuation = avatar.GetComponentInChildren<EyeTrackingBoneActuation>(true);
-            if (eyeActuation == null) return;
+            var eyeActuation = avatar != null ? avatar.GetComponentInChildren<EyeTrackingBoneActuation>(true) : null;
 
             var sectionToggle = PanelSectionToggle.CreateNewEntry(container);
             var eyeGroup = PanelSectionToggleHelpers.CreateCollapsibleContentGroup(
                 sectionToggle, container, BasisLocalization.Get("settings.faceTracking.eyeTracking"));
             eyeGroup.SetDescription(BasisLocalization.Get("settings.faceTracking.eyeTracking.description"));
+            BuildBindingToggle(eyeGroup, "settings.myAvatar.autoDetectEyeTracking", BasisSettingsDefaults.AutoDetectEyeTracking);
+
+            var lookRangeToggle = PanelToggle.CreateNewEntry(eyeGroup.ContentParent);
+            lookRangeToggle.Descriptor.SetTitle(BasisLocalization.Get("settings.myAvatar.eyeLookRangeOverride"));
+            lookRangeToggle.Descriptor.SetDescription(BasisLocalization.Get("settings.myAvatar.eyeLookRangeOverride.description"));
+            lookRangeToggle.AssignBinding(BasisSettingsDefaults.EyeMaxLookAngleOverride);
+            var lookRangeSlider = PanelSlider.CreateEntryAndBind(eyeGroup.ContentParent, new PanelSlider.SliderSettings
+            {
+                SliderMin = BasisLocalEyeDriverData.MinUserLookAngle,
+                SliderMax = BasisLocalEyeDriverData.MaxUserLookAngle,
+                DecimalPlaces = 0,
+                DisplayMode = ValueDisplayMode.Degrees,
+            }, BasisSettingsDefaults.EyeMaxLookAngleOverrideDegrees);
+            lookRangeSlider.Descriptor.SetTitle(BasisLocalization.Get("settings.myAvatar.eyeLookRange"));
+            lookRangeSlider.Descriptor.SetDescription(BasisLocalization.Get("settings.myAvatar.eyeLookRange.description"));
+            void ApplyLookRangeVisibility(bool visible)
+            {
+                lookRangeSlider.gameObject.SetActive(visible);
+                eyeGroup.ForceRebuild();
+            }
+            ApplyLookRangeVisibility(BasisSettingsDefaults.EyeMaxLookAngleOverride.RawValue);
+            lookRangeToggle.OnValueChanged += ApplyLookRangeVisibility;
+
+            if (eyeActuation == null)
+            {
+                PanelSectionToggleHelpers.FinalizeCollapsibleGroup(sectionToggle, eyeGroup, true,
+                    visible => { if (visible) ApplyLookRangeVisibility(BasisSettingsDefaults.EyeMaxLookAngleOverride.RawValue); });
+                return;
+            }
 
             var overrideToggle = PanelToggle.CreateNewEntry(eyeGroup.ContentParent);
             overrideToggle.Descriptor.SetTitle(BasisLocalization.Get("settings.faceTracking.overrideRotationLimits"));
@@ -262,6 +310,7 @@ namespace HVR.Basis.Comms
                     if (visible)
                     {
                         ApplySliderVisibility(eyeActuation.RuntimeOverrideEnabled);
+                        ApplyLookRangeVisibility(BasisSettingsDefaults.EyeMaxLookAngleOverride.RawValue);
                     }
                 });
         }

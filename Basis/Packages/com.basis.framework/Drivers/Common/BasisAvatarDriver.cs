@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.Scripts.Common;
 using Basis.Scripts.TransformBinders.BoneControl;
 using GatorDragonGames.JigglePhysics;
@@ -18,8 +19,9 @@ namespace Basis.Scripts.Drivers
     /// <see cref="BasisBoneTrackedRole"/> values, spine membership checks, and utilities
     /// to add/remove serialized jiggle colliders based on a <see cref="BasisTransformMapping"/>.
     /// </remarks>
+    [AutoStaticsCleanup]
     [System.Serializable]
-    public abstract class BasisAvatarDriver
+    public abstract partial class BasisAvatarDriver
     {
         /// <summary>
         /// Attempts to convert a Unity <see cref="HumanBodyBones"/> value into a <see cref="BasisBoneTrackedRole"/>.
@@ -235,6 +237,7 @@ namespace Basis.Scripts.Drivers
         /// <summary>Which detail level of colliders is currently registered with the jiggle system.</summary>
         public BasisJiggleColliderTier RegisteredColliderTier = BasisJiggleColliderTier.Full;
 
+        private bool _feetRegistered, _armsRegistered, _handsRegistered, _fingersRegistered;
         // Retained so deferred finger colliders can be built lazily on LOD tier-up (see ApplyColliderLOD).
         private BasisTransformMapping _jiggleColliderMapping;
         private bool _fingersBuilt;
@@ -331,6 +334,8 @@ namespace Basis.Scripts.Drivers
 
             HasJiggleColliders = total > 0 || deferFingers;
             RegisteredColliderTier = deferFingers ? BasisJiggleColliderTier.NoFingers : BasisJiggleColliderTier.Full;
+            _feetRegistered = _armsRegistered = _handsRegistered = true;
+            _fingersRegistered = !deferFingers;
 
             // Batch-add the full set at once to avoid O(n²) dedup in JiggleMemoryBus. The distance
             // LOD pass (BasisTransmissionResults) trims remote avatars back down afterward.
@@ -383,27 +388,28 @@ namespace Basis.Scripts.Drivers
                 _fingersBuilt = true;
             }
 
-            ApplyColliderCategoryDelta(JiggleCollidersFeet, cur[0], next[0]);
-            ApplyColliderCategoryDelta(JiggleCollidersArms, cur[1], next[1]);
-            ApplyColliderCategoryDelta(JiggleCollidersHands, cur[2], next[2]);
-            ApplyColliderCategoryDelta(JiggleCollidersFingers, cur[3], next[3]);
+            ApplyColliderCategoryDelta(JiggleCollidersFeet, cur[0], next[0], ref _feetRegistered);
+            ApplyColliderCategoryDelta(JiggleCollidersArms, cur[1], next[1], ref _armsRegistered);
+            ApplyColliderCategoryDelta(JiggleCollidersHands, cur[2], next[2], ref _handsRegistered);
+            ApplyColliderCategoryDelta(JiggleCollidersFingers, cur[3], next[3], ref _fingersRegistered);
 
             RegisteredColliderTier = target;
         }
 
-        private static void ApplyColliderCategoryDelta(List<JiggleColliderSerializable> colliders, bool wasActive, bool nowActive)
+        private static void ApplyColliderCategoryDelta(List<JiggleColliderSerializable> colliders, bool wasActive, bool nowActive, ref bool registered)
         {
             if (colliders.Count == 0 || wasActive == nowActive)
             {
                 return;
             }
-            if (nowActive)
+            if (registered)
+            {
+                JigglePhysics.SetJiggleCollidersEnabled(colliders, nowActive);
+            }
+            else if (nowActive)
             {
                 JigglePhysics.AddJiggleColliders(colliders);
-            }
-            else
-            {
-                JigglePhysics.RemoveJiggleColliders(colliders);
+                registered = true;
             }
         }
 
@@ -602,13 +608,15 @@ namespace Basis.Scripts.Drivers
             JiggleCollidersFingers.Clear();
             HasJiggleColliders = false;
             RegisteredColliderTier = BasisJiggleColliderTier.Full;
+            _feetRegistered = _armsRegistered = _handsRegistered = _fingersRegistered = false;
             _fingersBuilt = false;
             _jiggleColliderMapping = null;
         }
         /// <summary>
-        /// Applies per-renderer flags for local-avatar SkinnedMeshRenderers and ensures the face mesh has its shadow-only clone.
+        /// Applies per-renderer flags for local-avatar SkinnedMeshRenderers and creates shadow-only
+        /// clones for every renderer whose geometry is influenced by the head hierarchy.
         /// </summary>
-        public static void LocalRenderMeshSettings(int layer, int skinnedMeshRendererLength, SkinnedMeshRenderer[] skinnedMeshRenderers, SkinnedMeshRenderer FaceMesh)
+        public static void LocalRenderMeshSettings(int layer, int skinnedMeshRendererLength, SkinnedMeshRenderer[] skinnedMeshRenderers, SkinnedMeshRenderer FaceMesh, Transform head = null)
         {
             RemoveOldShadowClones();
 
@@ -621,28 +629,42 @@ namespace Basis.Scripts.Drivers
                 Render.gameObject.layer = layer;
                 Render.forceMeshLod = 0;
             }
+
+            _shadowCloneLayer = layer;
             if (FaceMesh != null)
             {
-                FaceMesh.shadowCastingMode = ShadowCastingMode.Off;
-                _shadowCloneSource = FaceMesh;
-                _shadowCloneLayer = layer;
+                AddShadowCloneSource(FaceMesh);
+            }
 
-                if (LocalShadowCloneAllowed)
+            if (head != null)
+            {
+                for (int index = 0; index < skinnedMeshRendererLength; index++)
                 {
-                    EnsureShadowOnlyClone(FaceMesh, layer);
+                    SkinnedMeshRenderer renderer = skinnedMeshRenderers[index];
+                    if (renderer != FaceMesh && IsRendererInfluencedByHead(renderer, head))
+                    {
+                        AddShadowCloneSource(renderer);
+                    }
                 }
             }
-            else
+
+            if (LocalShadowCloneAllowed)
             {
-                _shadowCloneSource = null;
+                EnableShadowClones();
             }
         }
 
         /// <summary>
-        /// Source mesh and layer the shadow-only clone was last built from, kept so the clone can
-        /// be rebuilt when the graphics quality level moves without waiting for an avatar reload.
+        /// Sources and layer the shadow-only clones were last built from, kept so the clones can be
+        /// rebuilt when the graphics quality level moves without waiting for an avatar reload.
         /// </summary>
-        private static SkinnedMeshRenderer _shadowCloneSource;
+        private struct ShadowCloneSource
+        {
+            public SkinnedMeshRenderer Renderer;
+            public ShadowCastingMode OriginalShadowCastingMode;
+        }
+
+        private static readonly List<ShadowCloneSource> ShadowCloneSources = new();
         private static int _shadowCloneLayer;
 
         /// <summary>
@@ -670,16 +692,12 @@ namespace Basis.Scripts.Drivers
 
             if (!wanted)
             {
-                RemoveOldShadowClones();
+                DestroyShadowClones();
+                RestoreShadowCloneSourceModes();
                 return;
             }
 
-            // Unity's overloaded null check also covers the source being destroyed by an avatar
-            // swap since it was captured.
-            if (_shadowCloneSource != null)
-            {
-                EnsureShadowOnlyClone(_shadowCloneSource, _shadowCloneLayer);
-            }
+            EnableShadowClones();
         }
         /// <summary>
         /// Applies per-renderer flags for remote-avatar SkinnedMeshRenderers.
@@ -697,6 +715,13 @@ namespace Basis.Scripts.Drivers
         private static List<BasisShadowCloneBlendshapeSync> ShadowCloneSyncs = new();
         public static void RemoveOldShadowClones()
         {
+            DestroyShadowClones();
+            RestoreShadowCloneSourceModes();
+            ShadowCloneSources.Clear();
+        }
+
+        private static void DestroyShadowClones()
+        {
             for (int i = 0; i < ShadowCloneSyncs.Count; i++)
             {
                 ShadowCloneSyncs[i].Dispose();
@@ -709,9 +734,138 @@ namespace Basis.Scripts.Drivers
             }
             ShadowCloneSyncs.Clear();
         }
-        private static void EnsureShadowOnlyClone(SkinnedMeshRenderer source, int layer)
+
+        private static void RestoreShadowCloneSourceModes()
         {
-            if (source.enabled && source.gameObject.activeSelf)
+            for (int i = 0; i < ShadowCloneSources.Count; i++)
+            {
+                ShadowCloneSource source = ShadowCloneSources[i];
+                if (source.Renderer != null)
+                {
+                    source.Renderer.shadowCastingMode = source.OriginalShadowCastingMode;
+                }
+            }
+        }
+
+        private static void AddShadowCloneSource(SkinnedMeshRenderer renderer)
+        {
+            if (renderer == null)
+            {
+                return;
+            }
+
+            for (int i = 0; i < ShadowCloneSources.Count; i++)
+            {
+                if (ShadowCloneSources[i].Renderer == renderer)
+                {
+                    return;
+                }
+            }
+
+            ShadowCloneSources.Add(new ShadowCloneSource
+            {
+                Renderer = renderer,
+                OriginalShadowCastingMode = renderer.shadowCastingMode,
+            });
+        }
+
+        private static void EnableShadowClones()
+        {
+            for (int i = 0; i < ShadowCloneSources.Count; i++)
+            {
+                SkinnedMeshRenderer source = ShadowCloneSources[i].Renderer;
+                if (source == null)
+                {
+                    continue;
+                }
+
+                if (EnsureShadowOnlyClone(source, _shadowCloneLayer))
+                {
+                    source.shadowCastingMode = ShadowCastingMode.Off;
+                }
+            }
+        }
+
+        /// <summary>
+        /// Returns whether a renderer contains vertices driven by the head or one of its descendants.
+        /// Looking at the renderer's bone array alone is insufficient because exporters commonly put
+        /// the complete avatar armature on every mesh, even when a mesh uses only a few of those bones.
+        /// </summary>
+        internal static bool IsRendererInfluencedByHead(SkinnedMeshRenderer renderer, Transform head)
+        {
+            if (renderer == null || head == null)
+            {
+                return false;
+            }
+
+            Transform rendererTransform = renderer.transform;
+            if (rendererTransform == head || rendererTransform.IsChildOf(head))
+            {
+                return true;
+            }
+
+            Transform[] bones = renderer.bones;
+            if (bones == null || bones.Length == 0)
+            {
+                Transform rootBone = renderer.rootBone;
+                return rootBone != null && (rootBone == head || rootBone.IsChildOf(head));
+            }
+
+            bool[] headBones = new bool[bones.Length];
+            bool hasHeadBone = false;
+            for (int i = 0; i < bones.Length; i++)
+            {
+                Transform bone = bones[i];
+                bool isHeadBone = bone != null && (bone == head || bone.IsChildOf(head));
+                headBones[i] = isHeadBone;
+                hasHeadBone |= isHeadBone;
+            }
+
+            if (!hasHeadBone)
+            {
+                return false;
+            }
+
+            Mesh mesh = renderer.sharedMesh;
+            if (mesh == null)
+            {
+                return false;
+            }
+
+            // Asset bundles can contain non-readable meshes. Their bone arrays are still available,
+            // so prefer the conservative answer rather than failing avatar setup or omitting a head.
+            if (!mesh.isReadable)
+            {
+                return true;
+            }
+
+            var weights = mesh.GetAllBoneWeights();
+            if (!weights.IsCreated || weights.Length == 0)
+            {
+                Transform rootBone = renderer.rootBone;
+                return rootBone != null && (rootBone == head || rootBone.IsChildOf(head));
+            }
+
+            for (int i = 0; i < weights.Length; i++)
+            {
+                BoneWeight1 weight = weights[i];
+                if (weight.weight > 0f && IsHeadBoneIndex(headBones, weight.boneIndex))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private static bool IsHeadBoneIndex(bool[] headBones, int index)
+        {
+            return index >= 0 && index < headBones.Length && headBones[index];
+        }
+
+        private static bool EnsureShadowOnlyClone(SkinnedMeshRenderer source, int layer)
+        {
+            if (source.enabled && source.gameObject.activeInHierarchy)
             {
                 // Create clone object as sibling (keeps hierarchy simple)
                 var cloneGO = new GameObject(source.gameObject.name + "_ShadowOnly");
@@ -753,12 +907,14 @@ namespace Basis.Scripts.Drivers
                 LocalShadowClone.updateWhenOffscreen = false;
                 LocalShadowClone.forceMatrixRecalculationPerRender = false;
                 LocalShadowClone.quality = SkinQuality.Bone1;
-                LocalShadowClone.allowOcclusionWhenDynamic = true;
                 LocalShadowClone.skinnedMotionVectors = false;
                 LocalShadowClone.localBounds = source.localBounds;
                 LocalShadowClone.forceMeshLod = -1;
                 ShadowCloneSyncs.Add(new BasisShadowCloneBlendshapeSync(source, LocalShadowClone, blendShapeCount));
+                return true;
             }
+
+            return false;
         }
         public static unsafe void ScheduleReadBlendShapes(float epsilon = 0.001f)
         {
@@ -781,31 +937,22 @@ namespace Basis.Scripts.Drivers
                 int count = sync.Count;
 
                 float* pCurrent = (float*)sync.Current.GetUnsafePtr();
+                float* pPrevious = (float*)sync.Previous.GetUnsafePtr();
+                byte* pChanged = (byte*)sync.ChangedMask.GetUnsafePtr();
                 SkinnedMeshRenderer source = sync.Source;
                 for (int Index = 0; Index < count; Index++)
                 {
-                    pCurrent[Index] = source.GetBlendShapeWeight(Index);
+                    float current = source.GetBlendShapeWeight(Index);
+                    pCurrent[Index] = current;
+                    bool changed = Mathf.Abs(current - pPrevious[Index]) > epsilon;
+                    pChanged[Index] = (byte)(changed ? 1 : 0);
+                    if (changed)
+                    {
+                        pPrevious[Index] = current;
+                    }
                 }
-
-                // Schedule job
-                var job = new BasisDiffBlendShapesJob
-                {
-                    Current = sync.Current,
-                    Previous = sync.Previous,
-                    ChangedMask = sync.ChangedMask,
-                    Epsilon = epsilon
-                };
-
-                // Batch size can be tuned; 32 is a decent start
-                sync.Handle = job.Schedule(count, 32);
+                sync.Handle = default;
             }
-            // Self-sufficient kick: the driver currently calls BasisAuthoredMotionSystem.Schedule()
-            // immediately after this (which flushes its own job via the same API), so this job has
-            // always started by the time ApplyShadowCloneBlendShapes joins it later in LateUpdate —
-            // but that overlap was incidental to caller ordering, not guaranteed by this function on
-            // its own. Matches the standing rule: a schedule without a kick at schedule time is not
-            // actually overlapping anything, it just happens not to matter yet.
-            JobHandle.ScheduleBatchedJobs();
         }
         public static unsafe void ApplyShadowCloneBlendShapes()
         {

@@ -1,6 +1,9 @@
 using System;
 using System.Collections.Concurrent;
+using System.IO;
 using System.Linq;
+using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Threading;
 using Microsoft.ML.OnnxRuntime;
 using Microsoft.ML.OnnxRuntime.Tensors;
@@ -16,6 +19,9 @@ namespace OpenLipSync.Inference
         private readonly object _lock = new object();
         private readonly ConcurrentDictionary<uint, AudioContext> _contexts = new ConcurrentDictionary<uint, AudioContext>();
         private InferenceSession _onnxSession;
+#if UNITY_ANDROID && !UNITY_EDITOR
+        private NativeLipSyncNet _native;
+#endif
         private ModelConfig _modelConfig;
         private AudioProcessingConfig _audioConfig;
         private int _nextContextId = 1;
@@ -95,6 +101,29 @@ namespace OpenLipSync.Inference
                     LastError = "No config JSON provided";
                 }
 
+#if UNITY_WEBGL && !UNITY_EDITOR
+                if (_numVisemes != BasisWebLipSync.KernelVisemes)
+                {
+                    LastError = $"The web lip sync kernel produces {BasisWebLipSync.KernelVisemes} visemes, the model config declares {_numVisemes}";
+                    return Result.CannotCreateContext;
+                }
+                if (BasisWebLipSync.BasisWebLipSync_Initialize(modelBytes, modelBytes.Length) == BasisWebLipSync.Failed)
+                {
+                    LastError = "The web lip sync worker could not start, see the browser console";
+                    return Result.CannotCreateContext;
+                }
+                _isStreaming = true;
+#else
+#if UNITY_ANDROID && !UNITY_EDITOR
+                if (TryInitializeNative(modelBytes))
+                {
+                    _initialized = true;
+                    return Result.Success;
+                }
+#endif
+#if ENABLE_CORECLR
+                InstallOrtResolver();
+#endif
                 var sessionOptions = new SessionOptions();
                 sessionOptions.LogSeverityLevel = OrtLoggingLevel.ORT_LOGGING_LEVEL_WARNING;
                 sessionOptions.GraphOptimizationLevel = GraphOptimizationLevel.ORT_ENABLE_ALL;
@@ -112,17 +141,93 @@ namespace OpenLipSync.Inference
                 Debug.Log(_isStreaming
                     ? "[OpenLipSync] streaming model detected (cached convolutions, ~1 frame of work per hop)"
                     : "[OpenLipSync] legacy windowed model detected - full window re-run per hop. Consider re-exporting as streaming.");
+#endif
 
                 _initialized = true;
                 return Result.Success;
             }
             catch (Exception ex)
             {
-                Debug.LogError($"[OpenLipSync] Initialization failed: {ex.Message}");
-                LastError = $"Initialization failed: {ex.Message}";
+                LastError = DescribeFailure(ex);
                 return Result.CannotCreateContext;
             }
         }
+
+        private static string OrtVersion => typeof(InferenceSession).Assembly.GetName().Version.ToString(3);
+
+        public static string DescribeFailure(Exception ex)
+        {
+            Exception root = ex;
+            bool native = false;
+            while (root.InnerException != null && (root is TypeInitializationException || root is TargetInvocationException || root is AggregateException))
+            {
+                native |= root is TypeInitializationException init && init.TypeName != null && init.TypeName.StartsWith("Microsoft.ML.OnnxRuntime", StringComparison.Ordinal);
+                root = root.InnerException;
+            }
+            native |= root is DllNotFoundException || root is EntryPointNotFoundException || root is BadImageFormatException;
+            string reason = "ONNX Runtime could not start the lip sync model";
+            if (native)
+            {
+                string loaded = LoadedOrtModule(out bool bundled);
+                reason = loaded == null ? $"the ONNX Runtime {OrtVersion} native library for {Application.platform} {RuntimeInformation.ProcessArchitecture} could not be loaded"
+                    : bundled ? $"the bundled ONNX Runtime ({loaded}) loaded but would not start"
+                    : $"a different ONNX Runtime ({loaded}) was loaded instead of the {OrtVersion} copy that ships with Basis";
+            }
+            return $"{reason}.\n{root.GetType().Name}: {root.Message}";
+        }
+
+        private static string LoadedOrtModule(out bool bundled)
+        {
+            bundled = false;
+            try
+            {
+                foreach (System.Diagnostics.ProcessModule module in System.Diagnostics.Process.GetCurrentProcess().Modules)
+                {
+                    string name = module.ModuleName;
+                    if (!(name.StartsWith("onnxruntime.", StringComparison.OrdinalIgnoreCase) || name.StartsWith("libonnxruntime.", StringComparison.OrdinalIgnoreCase))) continue;
+                    string path = Path.GetFullPath(module.FileName), version = module.FileVersionInfo?.FileVersion;
+                    bundled = path.IndexOf("com.basis.openlipsync", StringComparison.OrdinalIgnoreCase) >= 0 || path.StartsWith(Path.GetFullPath(Application.dataPath), StringComparison.OrdinalIgnoreCase);
+                    return string.IsNullOrEmpty(version) ? path : $"{path}, version {version}";
+                }
+            }
+            catch (Exception)
+            {
+            }
+            return null;
+        }
+#if ENABLE_CORECLR
+        private static bool _ortResolverInstalled;
+        private static string _bundledOrtPath;
+        private static MethodInfo _tryLoad;
+
+        // CoreCLR players only probe Managed and CoreCLR/native before the OS search path, so the plugin in Data/Plugins loses to any onnxruntime.dll in System32 or on PATH.
+        private static void InstallOrtResolver()
+        {
+            if (_ortResolverInstalled) return;
+            _ortResolverInstalled = true;
+            string file = RuntimeInformation.IsOSPlatform(OSPlatform.Windows) ? "onnxruntime.dll" : RuntimeInformation.IsOSPlatform(OSPlatform.OSX) ? "libonnxruntime.dylib" : "libonnxruntime.so", data = Application.dataPath;
+            _bundledOrtPath = new[] { Path.Combine(data, "Plugins", "x86_64", file), Path.Combine(data, "Plugins", file), Path.Combine(data, "PlugIns", file) }.FirstOrDefault(File.Exists);
+            Type nativeLibrary = Type.GetType("System.Runtime.InteropServices.NativeLibrary"), resolver = Type.GetType("System.Runtime.InteropServices.DllImportResolver");
+            _tryLoad = nativeLibrary?.GetMethod("TryLoad", new[] { typeof(string), typeof(IntPtr).MakeByRefType() });
+            MethodInfo set = resolver == null ? null : nativeLibrary?.GetMethod("SetDllImportResolver", new[] { typeof(Assembly), resolver });
+            if (_bundledOrtPath == null || _tryLoad == null || set == null) return;
+            try
+            {
+                set.Invoke(null, new object[] { typeof(InferenceSession).Assembly, Delegate.CreateDelegate(resolver, typeof(OpenLipSyncBackend).GetMethod(nameof(ResolveOrt), BindingFlags.NonPublic | BindingFlags.Static)) });
+            }
+            catch (TargetInvocationException ex)
+            {
+                Debug.LogWarning($"[OpenLipSync] could not point ONNX Runtime at {_bundledOrtPath}: {ex.InnerException?.Message}");
+            }
+        }
+
+        private static IntPtr ResolveOrt(string name, Assembly assembly, DllImportSearchPath? searchPath)
+        {
+            if (name != "onnxruntime") return IntPtr.Zero;
+            object[] args = { Path.GetFullPath(_bundledOrtPath), IntPtr.Zero };
+            return (bool)_tryLoad.Invoke(null, args) ? (IntPtr)args[1] : IntPtr.Zero;
+        }
+#endif
 
         public void Shutdown()
         {
@@ -138,10 +243,56 @@ namespace OpenLipSync.Inference
 
                 _onnxSession?.Dispose();
                 _onnxSession = null;
+#if UNITY_ANDROID && !UNITY_EDITOR
+                _native?.Dispose();
+                _native = null;
+#endif
 
                 _initialized = false;
             }
         }
+
+#if UNITY_ANDROID && !UNITY_EDITOR
+        private bool TryInitializeNative(byte[] modelBytes)
+        {
+            if (_audioConfig == null || _audioConfig.NMels != BasisNativeLipSync.Mels || _numVisemes != BasisNativeLipSync.Visemes)
+            {
+                Debug.LogWarning($"[OpenLipSync] the native kernel runs {BasisNativeLipSync.Mels} mels to {BasisNativeLipSync.Visemes} visemes, this model declares {_audioConfig?.NMels} to {_numVisemes}; using ONNX Runtime");
+                return false;
+            }
+            _native = NativeLipSyncNet.Create(modelBytes, out string error);
+            if (_native == null)
+            {
+                Debug.LogWarning($"[OpenLipSync] native kernel unavailable ({error}); using ONNX Runtime");
+                return false;
+            }
+            _isStreaming = true;
+            Debug.Log("[OpenLipSync] native kernel initialized, all speakers run as one batch per tick");
+            return true;
+        }
+
+        public bool DefersResults => _native != null;
+
+        public bool Flush()
+        {
+            NativeLipSyncNet native = _native;
+            if (native == null) return true;
+            try
+            {
+                return native.Flush();
+            }
+            catch (Exception ex)
+            {
+                LastError = $"Flush: {ex.Message}";
+                Debug.LogWarning($"[OpenLipSync] native batch error: {ex}");
+                return false;
+            }
+        }
+#else
+        public bool DefersResults => false;
+
+        public bool Flush() => true;
+#endif
 
         public Result CreateContext(ref uint context)
         {
@@ -155,6 +306,13 @@ namespace OpenLipSync.Inference
 
             try
             {
+#if UNITY_WEBGL && !UNITY_EDITOR
+                var audioContext = new AudioContext(_inputSampleRate, _audioConfig, _numVisemes, new WebStreamingSession(), _isMultiLabel);
+#elif UNITY_ANDROID && !UNITY_EDITOR
+                var audioContext = _native != null
+                    ? new AudioContext(_inputSampleRate, _audioConfig, _numVisemes, new NativeStreamingSession(), _isMultiLabel)
+                    : new AudioContext(_inputSampleRate, _audioConfig, _numVisemes, _isStreaming ? new StreamingSession(_onnxSession, _audioConfig.NMels, _numVisemes) : null, _isMultiLabel);
+#else
                 // Each player needs its OWN convolution cache state. The InferenceSession is
                 // shared and thread-safe; only the caches and IoBindings are per-context.
                 StreamingSession streaming = _isStreaming
@@ -163,6 +321,7 @@ namespace OpenLipSync.Inference
 
                 var audioContext = new AudioContext(_inputSampleRate, _audioConfig, _numVisemes,
                                                     streaming, _isMultiLabel);
+#endif
                 uint id = (uint)Interlocked.Increment(ref _nextContextId);
                 context = id;
                 _contexts[context] = audioContext;
@@ -226,7 +385,13 @@ namespace OpenLipSync.Inference
 
         private Result ProcessFrameFloatInternal(uint context, ReadOnlySpan<float> audio, bool stereo, ref Frame frame)
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (!_initialized)
+#elif UNITY_ANDROID && !UNITY_EDITOR
+            if (!_initialized || (_onnxSession == null && _native == null))
+#else
             if (!_initialized || _onnxSession == null)
+#endif
             {
                 LastError = "Backend not initialized or model not loaded";
                 return Result.Unknown;
@@ -258,9 +423,8 @@ namespace OpenLipSync.Inference
                     // temporal context, so there is no window to re-run.
                     while (audioContext.TryGetNextMelFrame(out var melFeatures))
                     {
-                        audioContext.StepStreaming(melFeatures);
+                        if (audioContext.StepStreaming(melFeatures)) DebugInferenceRuns++;
                         melCount++;
-                        DebugInferenceRuns++;
                     }
                 }
                 else
@@ -290,6 +454,13 @@ namespace OpenLipSync.Inference
                     if (probs[i] > max) max = probs[i];
                 DebugLastInferenceMax = max;
 
+#if UNITY_ANDROID && !UNITY_EDITOR
+                if (_native != null && audioContext.IsNative)
+                {
+                    _native.Queue(audioContext, frame);
+                    return Result.Success;
+                }
+#endif
                 audioContext.UpdateFrame(ref frame);
 
                 return Result.Success;

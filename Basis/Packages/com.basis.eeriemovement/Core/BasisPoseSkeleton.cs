@@ -1,8 +1,11 @@
 using System;
 using System.Collections.Generic;
+using Basis.Scripts.Drivers;
 using Unity.Collections;
+using Unity.Jobs;
 using Unity.Mathematics;
 using UnityEngine;
+using UnityEngine.Jobs;
 namespace Basis.IK
 {
     public sealed class BasisPoseSkeleton : IDisposable
@@ -14,6 +17,8 @@ namespace Basis.IK
         public float[] FitScale = Array.Empty<float>();
         public bool FitActive;
         float3[] authoredLocalPosition = Array.Empty<float3>();
+        TransformAccessArray nodeTransforms, writeTransforms;
+        NativeArray<int> writeIndicesNative;
         public bool IsCreated => Stream.LocalPosition.IsCreated;
         public void Build(Transform root, IReadOnlyList<Transform> bones)
         {
@@ -122,11 +127,74 @@ namespace Basis.IK
                 }
             }
             WriteIndices = writeIndices.ToArray();
+            var writeNodes = new Transform[WriteIndices.Length];
+            for (int i = 0; i < WriteIndices.Length; i++)
+            {
+                writeNodes[i] = Nodes[WriteIndices[i]];
+            }
+            nodeTransforms = new TransformAccessArray(Nodes);
+            writeTransforms = new TransformAccessArray(writeNodes);
+            writeIndicesNative = new NativeArray<int>(WriteIndices, Allocator.Persistent);
 
             SyncAnchor();
             Stream.InvalidateWorldCache();
         }
         public BasisBoneHandle Bind(Transform bone) => BasisBoneHandle.FromIndex(Array.IndexOf(Nodes, bone));
+        /// <summary>
+        /// Reconstructs a bone's fitted rest position in <paramref name="root"/> local space without
+        /// reading or disturbing the live animated pose. The root's own transform is intentionally
+        /// excluded so callers can apply the avatar's current runtime scale separately.
+        /// </summary>
+        public bool TryGetRestPositionRelativeTo(Transform bone, Transform root, out Vector3 position)
+        {
+            position = Vector3.zero;
+            if (!IsCreated || bone == null || root == null)
+            {
+                return false;
+            }
+
+            int boneIndex = Array.IndexOf(Nodes, bone);
+            int rootIndex = Array.IndexOf(Nodes, root);
+            if (boneIndex < 0 || rootIndex < 0)
+            {
+                return false;
+            }
+            if (boneIndex == rootIndex)
+            {
+                return true;
+            }
+
+            int[] chain = new int[BasisPoseStream.MaxDepth];
+            int depth = 0;
+            int walk = boneIndex;
+            while (walk >= 0 && walk != rootIndex && depth < chain.Length)
+            {
+                chain[depth++] = walk;
+                walk = Stream.Parent[walk];
+            }
+            if (walk != rootIndex)
+            {
+                return false;
+            }
+
+            float3 restPosition = float3.zero;
+            quaternion restRotation = quaternion.identity;
+            float3 restScale = new float3(1f);
+            for (int i = depth - 1; i >= 0; i--)
+            {
+                int index = chain[i];
+                restPosition += math.mul(restRotation, Stream.RestLocalPosition[index] * restScale);
+                restRotation = math.mul(restRotation, Stream.RestLocalRotation[index]);
+                restScale *= Stream.RestLocalScale[index];
+            }
+
+            if (!math.all(math.isfinite(restPosition)))
+            {
+                return false;
+            }
+            position = restPosition;
+            return true;
+        }
         public void SetTranslationFree(Transform bone)
         {
             int index = Array.IndexOf(Nodes, bone);
@@ -214,6 +282,12 @@ namespace Basis.IK
                 return;
             }
             SyncAnchor();
+            if (nodeTransforms.isCreated && nodeTransforms.length == Nodes.Length)
+            {
+                new BasisPoseGatherJob { LocalPosition = Stream.LocalPosition, LocalRotation = Stream.LocalRotation, LocalScale = Stream.LocalScale }.RunReadOnly(nodeTransforms);
+                Stream.InvalidateWorldCache();
+                return;
+            }
             for (int i = 0; i < Nodes.Length; i++)
             {
                 Transform node = Nodes[i];
@@ -227,6 +301,16 @@ namespace Basis.IK
                 Stream.LocalScale[i] = node.localScale;
             }
             Stream.InvalidateWorldCache();
+        }
+        public bool TryScheduleScatter(JobHandle dependency, out JobHandle handle)
+        {
+            handle = dependency;
+            if (!IsCreated || !writeTransforms.isCreated || writeTransforms.length != WriteIndices.Length)
+            {
+                return false;
+            }
+            handle = new BasisPoseScatterJob { WriteIndices = writeIndicesNative, LocalPosition = Stream.LocalPosition, LocalRotation = Stream.LocalRotation }.Schedule(writeTransforms, dependency);
+            return true;
         }
         public void ScatterNow()
         {
@@ -273,6 +357,9 @@ namespace Basis.IK
             Stream.WorldCacheStamp.Dispose();
             Stream.RestLocalPosition.Dispose();
             Stream.RestLocalScale.Dispose();
+            if (nodeTransforms.isCreated) nodeTransforms.Dispose();
+            if (writeTransforms.isCreated) writeTransforms.Dispose();
+            if (writeIndicesNative.IsCreated) writeIndicesNative.Dispose();
             Stream = default;
             Nodes = Array.Empty<Transform>();
             WriteIndices = Array.Empty<int>();

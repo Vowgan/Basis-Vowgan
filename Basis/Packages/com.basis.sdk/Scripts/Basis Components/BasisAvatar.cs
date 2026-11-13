@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using UnityEngine;
 
 namespace Basis.Scripts.BasisSdk
@@ -107,6 +108,7 @@ namespace Basis.Scripts.BasisSdk
         /// True once avatar setup has completed and readiness callbacks have fired for this instance.
         /// </summary>
         public bool IsReady { get; private set; }
+        public bool FaceExpressionTrackingActive { get; set; }
 
         /// <summary>
         /// Gets or sets the linked player ID. Setting also marks <see cref="HasLinkedPlayer"/> true.
@@ -145,6 +147,52 @@ namespace Basis.Scripts.BasisSdk
         /// </summary>
         [SerializeField]
         public Renderer[] Renders;
+
+        // DX12/Vulkan content loading keeps the GameObject active so Awake/OnEnable and avatar
+        // calibration can run, but suppresses every renderer atomically until the first solved
+        // pose. forceRenderingOff preserves authored Renderer.enabled state and any setup-time
+        // changes to it, avoiding both a visible T-pose and partial clothing reveals.
+        [System.NonSerialized] private Renderer[] loadVisibilityRenderers;
+        [System.NonSerialized] private bool[] loadVisibilityPreviousForceOff;
+        public bool HasLoadVisibilityGate => loadVisibilityRenderers != null;
+
+        public void BeginLoadVisibilityGate(IList<Renderer> renderers)
+        {
+            if (loadVisibilityRenderers != null || renderers == null || renderers.Count == 0)
+            {
+                return;
+            }
+            loadVisibilityRenderers = new Renderer[renderers.Count];
+            loadVisibilityPreviousForceOff = new bool[renderers.Count];
+            for (int i = 0; i < renderers.Count; i++)
+            {
+                Renderer renderer = renderers[i];
+                loadVisibilityRenderers[i] = renderer;
+                if (renderer != null)
+                {
+                    loadVisibilityPreviousForceOff[i] = renderer.forceRenderingOff;
+                    renderer.forceRenderingOff = true;
+                }
+            }
+        }
+
+        public void CompleteLoadVisibilityGate()
+        {
+            if (loadVisibilityRenderers == null)
+            {
+                return;
+            }
+            for (int i = 0; i < loadVisibilityRenderers.Length; i++)
+            {
+                Renderer renderer = loadVisibilityRenderers[i];
+                if (renderer != null)
+                {
+                    renderer.forceRenderingOff = loadVisibilityPreviousForceOff[i];
+                }
+            }
+            loadVisibilityRenderers = null;
+            loadVisibilityPreviousForceOff = null;
+        }
 
         /// <summary>
         /// True when this avatar is a runtime-built far LOD proxy standing in for the real

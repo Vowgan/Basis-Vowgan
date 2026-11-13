@@ -113,7 +113,7 @@ namespace Basis.Scripts.Drivers
         /// with no face mesh at all still reports its wearer's voice here.
         /// </summary>
         public float VoiceLevel01 =>
-            TrackedAudioSource != null && AudioSourceInactive && !AnnounceActive
+            AudioSourceInactive && !AnnounceActive && TrackedAudioSource != null
                 ? 0f
                 : BasisVoiceLevel.RmsToUnit(VoiceRms);
 
@@ -250,6 +250,9 @@ namespace Basis.Scripts.Drivers
         }
         public void Simulate(float DeltaTime)
         {
+#if UNITY_WEBGL && !UNITY_EDITOR
+            if (!EligibleForOpenLipSync && WasSuccessful && BasisOpenLipSyncDriver.IsInitialized) EligibleForOpenLipSync = true;
+#endif
             if (FaceVisible == false || !InVisemeRange)
             {
                 // Player left viseme range — release the OpenLipSync context
@@ -292,7 +295,7 @@ namespace Basis.Scripts.Drivers
         /// </summary>
         public bool ShouldReleaseForIdleSource()
         {
-            return TrackedAudioSource != null && AudioSourceInactive && !AnnounceActive;
+            return AudioSourceInactive && !AnnounceActive && TrackedAudioSource != null;
         }
 
         private bool _overrideZeroed;
@@ -411,6 +414,18 @@ namespace Basis.Scripts.Drivers
             if (UseOpenLipSync && openLipSyncContext != null)
             {
                 openLipSyncContext.ProcessAudioSamples(data, channels, Length);
+            }
+        }
+
+        public void ProcessSilence(int Length)
+        {
+            if (FaceVisible == false || !InVisemeRange || Muted || WasSuccessful == false)
+            {
+                return;
+            }
+            if (UseOpenLipSync && openLipSyncContext != null)
+            {
+                openLipSyncContext.ProcessSilence(Length);
             }
         }
 

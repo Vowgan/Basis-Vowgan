@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.BasisUI;
 using Basis.Network.Core;
 using Basis.Scripts.Common;
@@ -20,7 +21,8 @@ using UnityEngine.SceneManagement;
 /// Handles scene stripping (textures, probes, UI), config load, and network connect.
 /// </summary>
 #if UNITY_SERVER
-public class BasisHeadlessManagement : BasisBaseTypeManagement
+[AutoStaticsCleanup]
+public partial class BasisHeadlessManagement : BasisBaseTypeManagement
 {
     /// <summary>Injected/created headless eye input.</summary>
     public BasisHeadlessInput BasisHeadlessInput;
@@ -863,7 +865,7 @@ public class BasisHeadlessManagement : BasisBaseTypeManagement
         healthCheck = null;
     }
 
-    private void AttemptConnect()
+    private async void AttemptConnect()
     {
         if (isShuttingDown || !BasisNetworkManagement.IsInitialized)
         {
@@ -873,10 +875,30 @@ public class BasisHeadlessManagement : BasisBaseTypeManagement
         ResetServerHeadlessAudioPolicy();
         reconnectScheduled = false;
         BasisHeadlessRuntimeStatus.MarkConnecting();
-        BasisNetworkManagement.Ip = Ip;
+        string ip = Ip;
+        ushort port = (ushort)Port;
+        if (port == HostPortConnectionTargetParser.DefaultPort && BasisSrvResolver.TryBuildServiceName(ip, BasisSrvResolver.UdpProtocol, out string serviceName))
+        {
+            try
+            {
+                BasisSrvRecord[] records = await BasisSrvResolver.ResolveAsync(serviceName, 1500, CancellationToken.None);
+                if (records.Length > 0)
+                {
+                    BasisDebug.Log($"SRV {ip} -> {records[0].Target}:{records[0].Port}");
+                    ip = records[0].Target;
+                    port = records[0].Port;
+                }
+            }
+            catch (Exception ex)
+            {
+                BasisDebug.LogWarning($"SRV lookup for {ip} failed: {ex.Message}");
+            }
+            if (isShuttingDown || !BasisNetworkManagement.IsInitialized) return;
+        }
+        BasisNetworkManagement.Ip = ip;
         BasisNetworkManagement.Password = Password;
         BasisNetworkManagement.IsHostMode = false;
-        BasisNetworkManagement.Port = (ushort)Port;
+        BasisNetworkManagement.Port = port;
         BasisNetworkManagement.Connect();
         BasisDebug.Log("connecting to default");
         BasisMainMenu.Close();
@@ -1235,12 +1257,12 @@ public class BasisHeadlessManagement : BasisBaseTypeManagement
         return false;
     }
 
-    public static string[] adjectives = { "Swift", "Brave", "Clever", "Fierce", "Nimble", "Silent", "Bold", "Lucky", "Strong", "Mighty", "Sneaky", "Fearless", "Wise", "Vicious", "Daring" };
-    public static string[] nouns = { "Warrior", "Hunter", "Mage", "Rogue", "Paladin", "Shaman", "Knight", "Archer", "Monk", "Druid", "Assassin", "Sorcerer", "Ranger", "Guardian", "Berserker" };
-    public static string[] titles = { "the Swift", "the Bold", "the Silent", "the Brave", "the Fierce", "the Wise", "the Protector", "the Shadow", "the Flame", "the Phantom" };
-    public static string[] animals = { "Wolf", "Tiger", "Eagle", "Dragon", "Lion", "Bear", "Hawk", "Panther", "Raven", "Serpent", "Fox", "Falcon" };
+    [NoAutoStaticsCleanup] public static string[] adjectives = { "Swift", "Brave", "Clever", "Fierce", "Nimble", "Silent", "Bold", "Lucky", "Strong", "Mighty", "Sneaky", "Fearless", "Wise", "Vicious", "Daring" };
+    [NoAutoStaticsCleanup] public static string[] nouns = { "Warrior", "Hunter", "Mage", "Rogue", "Paladin", "Shaman", "Knight", "Archer", "Monk", "Druid", "Assassin", "Sorcerer", "Ranger", "Guardian", "Berserker" };
+    [NoAutoStaticsCleanup] public static string[] titles = { "the Swift", "the Bold", "the Silent", "the Brave", "the Fierce", "the Wise", "the Protector", "the Shadow", "the Flame", "the Phantom" };
+    [NoAutoStaticsCleanup] public static string[] animals = { "Wolf", "Tiger", "Eagle", "Dragon", "Lion", "Bear", "Hawk", "Panther", "Raven", "Serpent", "Fox", "Falcon" };
 
-    public static (string Name, string Hex)[] colors =
+    [NoAutoStaticsCleanup] public static (string Name, string Hex)[] colors =
     {
         ("Red", "#FF0000"),
         ("Blue", "#0000FF"),

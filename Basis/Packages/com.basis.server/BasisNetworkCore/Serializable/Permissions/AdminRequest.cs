@@ -132,8 +132,8 @@ namespace BasisNetworkCore.Serializable
             GlobalGetAvatarScaleLimits, // server→client: min/max avatar eye height in metres. Payload: [float minMeters][float maxMeters]
             SetGlobalAvatarScaleLimits, // admin: set min/max avatar eye height in metres (persisted). Non-admins are clamped to this range; admins bypass it. Payload: [float minMeters][float maxMeters]
 
-            GlobalGetResourceLimits, // server→client: persisted DoS caps. Payload: [int maxContentSpheresPerPlayer]
-            SetGlobalResourceLimits, // admin: set the persisted DoS caps. Payload: [int maxContentSpheresPerPlayer]
+            GlobalGetResourceLimits, // server→client: persisted DoS caps. Payload: [int maxContentSpheresPerPlayer][int contentSphereLeaveTimeoutSeconds][int contentSphereDeletionTimerSeconds]
+            SetGlobalResourceLimits, // admin: set the persisted DoS caps. Payload: [int maxContentSpheresPerPlayer][int contentSphereLeaveTimeoutSeconds][int contentSphereDeletionTimerSeconds]; the two timers are optional, older clients send only the cap
 
             // admin: toggle the global Cilbox lock. While set, every client blocks sandboxed Cilbox
             // code on avatars from running (props/worlds keep their own). State is appended in
@@ -311,6 +311,16 @@ namespace BasisNetworkCore.Serializable
             RenamePlayer,
             GetMuteState,    // moderator: one player's current moderation mute flags. Payload: [string uuid]
             MuteStateResult, // server→moderator: answer to GetMuteState, also echoed after SetVoiceMute/SetTextMute. Payload: [string uuid][bool voiceMuted][bool textMuted]
+            GlobalToggleContentRemoval,
+            GlobalToggleExternalLinks,
+            GetProtectionSettings, // config editor → server: send the current network protection settings back. No payload.
+            GlobalGetProtectionSettings, // server → config editor: every registered protection setting. Payload: BasisProtectionSettings.Write
+            SetProtectionSettings, // config editor → server: change some of them, persisted and applied live. Payload: [ushort count]{[string key][double value]}
+            GlobalToggleAvatarHosting,
+            GlobalToggleVideoClips,
+            SetGlobalImageMaxResolution, // admin: largest shared image side in units of 1024 px, persisted and rebroadcast in GlobalGetLockState. Payload: [byte k] (1-16)
+            SetGlobalVideoClipMaxSize, // admin: largest shared video/audio clip in megabytes, persisted and rebroadcast in GlobalGetLockState. Payload: [ushort megabytes] (16-1024)
+            SetGlobalVideoClipMaxPerPlayer, // admin: how many video/audio clips one player may share at once, persisted and rebroadcast in GlobalGetLockState. Payload: [byte count] (1-16)
         }
 
         /// <summary>

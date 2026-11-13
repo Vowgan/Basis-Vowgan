@@ -352,16 +352,18 @@ namespace SteamAudio
 
         public static PerspectiveCorrection GetPerspectiveCorrection()
         {
-            if (!SteamAudioSettings.Singleton.perspectiveCorrection)
+            var settings = SteamAudioSettings.Singleton;
+            if (!settings.perspectiveCorrection)
                 return default;
 
             var mainCamera = Singleton.GetMainCamera();
             PerspectiveCorrection correction = default;
-            if (mainCamera != null && mainCamera.aspect > .0f)
+            float aspect = mainCamera != null ? mainCamera.aspect : 0f;
+            if (aspect > .0f)
             {
-                correction.enabled = SteamAudioSettings.Singleton.perspectiveCorrection ? Bool.True : Bool.False;
-                correction.xfactor = 1.0f * SteamAudioSettings.Singleton.perspectiveCorrectionFactor;
-                correction.yfactor = correction.xfactor / mainCamera.aspect;
+                correction.enabled = Bool.True;
+                correction.xfactor = 1.0f * settings.perspectiveCorrectionFactor;
+                correction.yfactor = correction.xfactor / aspect;
 
                 // Camera space matches OpenGL convention. No need to transform matrix to ConvertTransform.
                 correction.transform = Common.TransformMatrix(mainCamera.projectionMatrix * mainCamera.worldToCameraMatrix);
@@ -608,6 +610,8 @@ namespace SteamAudio
         // This method is called at app shutdown.
         void OnApplicationQuit()
         {
+            SceneManager.sceneLoaded -= OnSceneLoaded;
+            SceneManager.sceneUnloaded -= OnSceneUnloaded;
             ShutDown();
         }
 
@@ -783,7 +787,7 @@ namespace SteamAudio
             }
             combined = JobHandle.CombineDependencies(sourcesHandle, listenersHandle);
         }
-        public JobHandle combined;
+        [NonSerialized] public JobHandle combined;
         // Far-distance cadence job (see ScheduleInstance): scheduled well before
         // ApplyInstance needs it so it overlaps the whole frame, not completed with
         // `combined` above — completing it early would throw away that overlap.
@@ -1025,7 +1029,6 @@ namespace SteamAudio
                             if (h == IntPtr.Zero) continue;
 
                             SteamAudioSource src = mSources[i];
-                            if (src == null) continue;
 
                             SimulationInputsCore core = mSourceCoreCache[i];
                             SimulationInputs inputs = default;
@@ -1474,7 +1477,7 @@ namespace SteamAudio
             }
 
             // Worker joined — free any handles queued for deferred release.
-            Singleton.DrainPendingSourceReleases();
+            Singleton.DrainPendingSourceReleases(true);
 
 #if STEAMAUDIO_ENABLED
             Singleton.DisposeTransformAndPoseBuffers();
@@ -1560,7 +1563,7 @@ namespace SteamAudio
 
             // Worker joined — free queued handles and drop the stale snapshot so the
             // next ApplyInstance rebuilds against the fresh simulator/sources.
-            Singleton.DrainPendingSourceReleases();
+            Singleton.DrainPendingSourceReleases(true);
             Singleton.mSnapCount = 0;
             Singleton.mReflSnapCount = 0;
 
@@ -1808,12 +1811,13 @@ namespace SteamAudio
         // Frees native source handles queued by SteamAudioSource.OnDestroy. Must be
         // called only when the direct worker is idle (top of ApplyInstance after the
         // reap WaitOne, or after the worker thread is joined on shutdown/reinit).
-        private void DrainPendingSourceReleases()
+        private void DrainPendingSourceReleases(bool joined = false)
         {
             if (sPendingSourceRelease.Count == 0)
                 return;
 
-            BlockUntilReflectionsIdleInstance();
+            if (!joined && (mReflInFlight || mReflInputCursor > 0 || mReflInputsStaged))
+                return;
 
             while (sPendingSourceRelease.Count > 0)
             {
@@ -2743,45 +2747,73 @@ namespace SteamAudio
             }
         }
 
+        static readonly ClosestHitCallback sClosestHit = ClosestHit;
+        static readonly AnyHitCallback sAnyHit = AnyHit;
+
         [MonoPInvokeCallback(typeof(ClosestHitCallback))]
         public static void ClosestHit(ref Ray ray, float minDistance, float maxDistance, out Hit hit, IntPtr userData)
         {
-            var origin = Common.ConvertVector(ray.origin);
-            var direction = Common.ConvertVector(ray.direction);
-
-            origin += minDistance * direction;
-
-            var layerMask = SteamAudioSettings.Singleton.layerMask;
-
             hit.objectIndex = 0;
             hit.triangleIndex = 0;
             hit.materialIndex = 0;
+            hit.distance = Mathf.Infinity;
+            hit.normal = new Vector3 { x = 0.0f, y = 0.0f, z = 0.0f };
+            hit.material = IntPtr.Zero;
 
-            if (Physics.Raycast(origin, direction, out RaycastHit rayHit, maxDistance, layerMask))
+            try
             {
-                hit.distance = rayHit.distance;
-                hit.normal = Common.ConvertVector(rayHit.normal);
-                hit.material = GetMaterialBufferForTransform(rayHit.collider.transform);
+                var origin = Common.ConvertVector(ray.origin);
+                var direction = Common.ConvertVector(ray.direction);
+
+                origin += minDistance * direction;
+
+                var layerMask = SteamAudioSettings.Singleton.layerMask;
+
+                if (Physics.Raycast(origin, direction, out RaycastHit rayHit, maxDistance, layerMask))
+                {
+                    var material = GetMaterialBufferForTransform(rayHit.collider.transform);
+                    hit.distance = rayHit.distance;
+                    hit.normal = Common.ConvertVector(rayHit.normal);
+                    hit.material = material;
+                }
             }
-            else
+            catch (Exception e)
             {
-                hit.distance = Mathf.Infinity;
-                hit.normal = new Vector3 { x = 0.0f, y = 0.0f, z = 0.0f };
-                hit.material = IntPtr.Zero;
+                ReportRayCallbackFailure(e);
             }
         }
 
         [MonoPInvokeCallback(typeof(AnyHitCallback))]
         public static void AnyHit(ref Ray ray, float minDistance, float maxDistance, out byte occluded, IntPtr userData)
         {
-            var origin = Common.ConvertVector(ray.origin);
-            var direction = Common.ConvertVector(ray.direction);
+            occluded = 0;
 
-            origin += minDistance * direction;
+            try
+            {
+                var origin = Common.ConvertVector(ray.origin);
+                var direction = Common.ConvertVector(ray.direction);
 
-            var layerMask = SteamAudioSettings.Singleton.layerMask;
+                origin += minDistance * direction;
 
-            occluded = (byte)(Physics.Raycast(origin, direction, maxDistance, layerMask) ? 1 : 0);
+                var layerMask = SteamAudioSettings.Singleton.layerMask;
+
+                occluded = (byte)(Physics.Raycast(origin, direction, maxDistance, layerMask) ? 1 : 0);
+            }
+            catch (Exception e)
+            {
+                ReportRayCallbackFailure(e);
+            }
+        }
+
+        static bool sRayCallbackFailureReported;
+
+        static void ReportRayCallbackFailure(Exception e)
+        {
+            if (sRayCallbackFailureReported)
+                return;
+
+            sRayCallbackFailureReported = true;
+            Debug.LogException(e);
         }
 
         // This method is called as soon as scripts are loaded, which happens whenever play mode is started
@@ -2857,12 +2889,12 @@ namespace SteamAudio
             scene.Release();
         }
 
-        static Scene CreateScene(Context context)
+        public static Scene CreateScene(Context context)
         {
             var sceneType = GetSceneType();
 
             var scene = new Scene(context, sceneType, Singleton.mEmbreeDevice, Singleton.mRadeonRaysDevice,
-                ClosestHit, AnyHit);
+                sClosestHit, sAnyHit);
 
             if (sceneType == SceneType.Custom)
             {

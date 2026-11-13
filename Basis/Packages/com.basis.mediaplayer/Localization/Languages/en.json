@@ -1,0 +1,234 @@
+{
+  "code": "en",
+  "nativeName": "English",
+  "entries": [
+    {
+      "key": "settings.media.title",
+      "value": "Media Player"
+    },
+    {
+      "key": "settings.media.description",
+      "value": "How media players on this machine decode video. These are per-machine settings; they are not part of any world."
+    },
+    {
+      "key": "settings.media.decode",
+      "value": "Decode preference"
+    },
+    {
+      "key": "settings.media.decode.tooltip",
+      "value": "Which decode route a media player may take. Takes effect the next time a source is opened."
+    },
+    {
+      "key": "settings.media.decode.hardwareFallback",
+      "value": "Hardware, fall back to software"
+    },
+    {
+      "key": "settings.media.decode.hardwareOnly",
+      "value": "Hardware only"
+    },
+    {
+      "key": "settings.media.decode.softwareOnly",
+      "value": "Software only"
+    },
+    {
+      "key": "settings.media.maxActive",
+      "value": "Media players at once"
+    },
+    {
+      "key": "settings.media.maxActive.tooltip",
+      "value": "How many media players may play at once. The furthest ones stop and start again when you go back to them. 0 removes the limit, which on a headset will cost you bandwidth and frame rate."
+    },
+    {
+      "key": "settings.media.bufferDepth",
+      "value": "Default buffer depth (ms)"
+    },
+    {
+      "key": "settings.media.bufferDepth.tooltip",
+      "value": "How much media is held back before playing, to ride out a patchy connection. Applies to every media player you have not tuned individually from the Media Players panel. 0 is Auto, which works it out from the connection and is the right answer for almost everyone. Raising it makes playback steadier and slower to start."
+    },
+    {
+      "key": "settings.media.captions",
+      "value": "Captions on by default"
+    },
+    {
+      "key": "settings.media.captions.tooltip",
+      "value": "Whether captions are drawn on a media player you have not decided individually. Any one player can be switched on or off from the Media Players panel without changing this."
+    },
+    {
+      "key": "settings.media.captionTextOpacity",
+      "value": "Default caption text opacity"
+    },
+    {
+      "key": "settings.media.captionBackgroundOpacity",
+      "value": "Default caption background opacity"
+    },
+    {
+      "key": "settings.media.engine.title",
+      "value": "Engine"
+    },
+    {
+      "key": "settings.media.engine.available",
+      "value": "{0} • {1} hardware video routes, {2} software"
+    },
+    {
+      "key": "settings.media.engine.unavailable",
+      "value": "Engine unavailable on this platform."
+    },
+    {
+      "key": "mediaClip.defaultName",
+      "value": "Video clip"
+    },
+    {
+      "key": "mediaClip.defaultAudioName",
+      "value": "Audio clip"
+    },
+    {
+      "key": "mediaClip.panel.play",
+      "value": "Play"
+    },
+    {
+      "key": "mediaClip.panel.pause",
+      "value": "Pause"
+    },
+    {
+      "key": "mediaClip.panel.restart",
+      "value": "Restart"
+    },
+    {
+      "key": "mediaClip.panel.remove",
+      "value": "Remove"
+    },
+    {
+      "key": "mediaClip.panel.hide",
+      "value": "Hide"
+    },
+    {
+      "key": "mediaClip.panel.confirmRemove",
+      "value": "Confirm?"
+    },
+    {
+      "key": "mediaClip.status.receiving",
+      "value": "Receiving {0}%"
+    },
+    {
+      "key": "mediaClip.status.preparing",
+      "value": "Preparing"
+    },
+    {
+      "key": "mediaClip.status.waiting",
+      "value": "Waiting for the sharer"
+    },
+    {
+      "key": "mediaClip.status.failed",
+      "value": "Could not receive this clip"
+    },
+    {
+      "key": "mediaClip.status.sharedBy",
+      "value": "Shared by {0}"
+    },
+    {
+      "key": "mediaClip.popup.title",
+      "value": "Clip not shared"
+    },
+    {
+      "key": "mediaClip.popup.accept",
+      "value": "OK"
+    },
+    {
+      "key": "mediaClip.popup.locked",
+      "value": "Media players are locked by an admin in this instance."
+    },
+    {
+      "key": "mediaClip.popup.unsupportedPlatform",
+      "value": "Video and audio clips cannot be shared from this platform."
+    },
+    {
+      "key": "mediaClip.popup.limit",
+      "value": "You can share up to {0} clips at once. Remove one to share another."
+    },
+    {
+      "key": "mediaClip.popup.readFailed",
+      "value": "{0} could not be read: {1}"
+    },
+    {
+      "key": "mediaClip.popup.tooLarge",
+      "value": "{0} is {1}. Clips can be up to {2}."
+    },
+    {
+      "key": "mediaClip.popup.notVideo",
+      "value": "{0} is not a video or audio file the media player can open."
+    },
+    {
+      "key": "mediaClip.panel.show",
+      "value": "Show"
+    },
+    {
+      "key": "mediaClip.panel.save",
+      "value": "Save"
+    },
+    {
+      "key": "mediaClip.panel.saving",
+      "value": "Saving"
+    },
+    {
+      "key": "mediaClip.panel.saved",
+      "value": "Saved"
+    },
+    {
+      "key": "mediaClip.panel.saveFailed",
+      "value": "Save failed"
+    },
+    {
+      "key": "mediaClip.panel.removeForMe",
+      "value": "Remove for me"
+    },
+    {
+      "key": "mediaClip.panel.sharedByYou",
+      "value": "Shared by you"
+    },
+    {
+      "key": "mediaClip.panel.unknownSharer",
+      "value": "someone"
+    },
+    {
+      "key": "mediaClip.panel.details",
+      "value": "{0} · {1}"
+    },
+    {
+      "key": "mediaClip.status.hidden",
+      "value": "Hidden for you"
+    },
+    {
+      "key": "mediaClip.status.locked",
+      "value": "Video and audio clips are locked by an admin"
+    },
+    {
+      "key": "mediaClip.popup.clipsLocked",
+      "value": "An admin has turned off video and audio clip sharing in this instance."
+    },
+    {
+      "key": "settings.media.clips.title",
+      "value": "Shared video and audio clips"
+    },
+    {
+      "key": "settings.media.clips.description",
+      "value": "Video and audio files that players paste or drop into the world."
+    },
+    {
+      "key": "settings.media.clips.accept",
+      "value": "Receive shared clips"
+    },
+    {
+      "key": "settings.media.clips.accept.tooltip",
+      "value": "Download and play video and audio clips other players share. When off, new clips are ignored and clips already here stay."
+    },
+    {
+      "key": "settings.media.clips.volume",
+      "value": "Shared clip volume"
+    },
+    {
+      "key": "settings.media.clips.volume.tooltip",
+      "value": "Starting volume for each shared clip. The volume slider under a clip changes that clip for you only."
+    }
+  ]
+}

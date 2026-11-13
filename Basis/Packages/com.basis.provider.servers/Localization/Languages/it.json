@@ -112,6 +112,10 @@
       "value": "★ {0}"
     },
     {
+      "key": "menu.servers.list.sourceBadge",
+      "value": "{0} ({1})"
+    },
+    {
       "key": "menu.servers.list.share",
       "value": "Condividi"
     },
@@ -146,6 +150,14 @@
     {
       "key": "menu.servers.usernamePrompt.body",
       "value": "Scegli il nome che vedranno gli altri giocatori, poi premi «Connetti»."
+    },
+    {
+      "key": "menu.servers.passwordPrompt.title",
+      "value": "Unisciti a {0}"
+    },
+    {
+      "key": "menu.servers.passwordPrompt.body",
+      "value": "La password è stata rifiutata. Inserisci la password del server."
     },
     {
       "key": "menu.servers.search.byNameOrAddress",
@@ -274,6 +286,17 @@
     {
       "key": "menu.servers.hostThirdPersonDisabled",
       "value": "Disabilita terza persona"
-    }
+    },
+    {
+      "key": "menu.servers.portInvalid",
+      "value": "La porta deve essere compresa tra 1 e 65535"
+    },
+    { "key": "menu.servers.list.portal", "value": "Piazza portale" },
+    { "key": "menu.servers.list.portalLifetime", "value": "Durata del portale" },
+    { "key": "menu.servers.list.portalLifetime.timed", "value": "60 secondi" },
+    { "key": "menu.servers.list.portalLifetime.persistent", "value": "Persistente" },
+    { "key": "menu.servers.list.portalStyle", "value": "Stile del portale" },
+    { "key": "menu.servers.list.portalStyle.orb", "value": "Sfera" },
+    { "key": "menu.servers.list.portalStyle.rift", "value": "Squarcio dimensionale" }
   ]
 }

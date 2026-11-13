@@ -1,3 +1,4 @@
+using Unity.Scripting.LifecycleManagement;
 using Basis.Scripts.BasisSdk.Interactions;
 using Basis.Scripts.BasisSdk.Players;
 using Basis.Scripts.Device_Management;
@@ -6,7 +7,8 @@ using Basis.Scripts.Drivers;
 using Basis.Scripts.TransformBinders.BoneControl;
 using System.Collections.Generic;
 using UnityEngine;
-public static class BasisAutoScaleEstimator
+[AutoStaticsCleanup]
+public static partial class BasisAutoScaleEstimator
 {
     const float MinEyeHeight = 1.10f;
     const float MaxEyeHeight = 2.10f;
@@ -14,14 +16,10 @@ public static class BasisAutoScaleEstimator
     const float ReleaseRate = 0.03f;
     public static bool HasEstimate;
     public static float EstimatedEyeHeight = BasisHeightDriver.FallbackHeightInMeters;
-    public static float EstimatedArmSpan = BasisHeightDriver.FallbackHeightInMeters;
-    static float maxArmSpan;
     public static void Reset()
     {
         HasEstimate = false;
-        maxArmSpan = 0f;
         EstimatedEyeHeight = BasisHeightDriver.FallbackHeightInMeters;
-        EstimatedArmSpan = BasisHeightDriver.FallbackHeightInMeters;
     }
     public static void Tick(float deltaTime)
     {
@@ -49,33 +47,16 @@ public static class BasisAutoScaleEstimator
 
         if (!HasEstimate) return;
 
-        EstimatedArmSpan = EstimateArmSpan(EstimatedEyeHeight);
-
+        // The arm span follows from the eye height inside ApplyScaleAndHeight.
         if (Mathf.Abs(EstimatedEyeHeight - BasisHeightDriver.PlayerEyeHeight) > ReapplyThreshold)
         {
             BasisHeightDriver.PlayerEyeHeight = EstimatedEyeHeight;
-            BasisHeightDriver.PlayerArmSpan = EstimatedArmSpan;
             BasisHeightDriver.ApplyScaleAndHeight();
         }
     }
-    static float EstimateArmSpan(float eyeHeight)
-    {
-        float lo = eyeHeight * 0.70f;
-        float hi = eyeHeight * 1.30f;
-
-        var dm = BasisDeviceManagement.Instance;
-        if (dm != null && dm.FindDevice(out BasisInput left, BasisBoneTrackedRole.LeftHand) && dm.FindDevice(out BasisInput right, BasisBoneTrackedRole.RightHand))
-        {
-            Vector3 l = left.UnscaledDeviceCoord.position;
-            Vector3 r = right.UnscaledDeviceCoord.position;
-            float span = Vector3.Distance(new Vector3(l.x, 0f, l.z), new Vector3(r.x, 0f, r.z));
-            maxArmSpan = Mathf.Max(maxArmSpan, span);
-        }
-
-        return maxArmSpan > 0f ? Mathf.Clamp(maxArmSpan, lo, hi) : eyeHeight;
-    }
 }
-public static class BasisCalibrationRefitGate
+[AutoStaticsCleanup]
+public static partial class BasisCalibrationRefitGate
 {
     static readonly HashSet<BasisInteractableObject> sheld = new();
     public static void MarkInteracting(BasisInteractableObject interactable)

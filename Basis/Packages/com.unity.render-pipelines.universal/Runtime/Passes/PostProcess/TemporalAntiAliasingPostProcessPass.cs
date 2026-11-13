@@ -10,6 +10,7 @@ namespace UnityEngine.Rendering.Universal
 
         Material m_Material;
         bool m_IsValid;
+        uint m_WarnCounter;
 
         public TemporalAntiAliasingPostProcessPass(Shader shader)
         {
@@ -18,6 +19,8 @@ namespace UnityEngine.Rendering.Universal
 
             m_Material = PostProcessUtils.LoadShader(shader, passName);
             m_IsValid = m_Material != null;
+
+            m_WarnCounter = 0;
         }
 
         public override void Dispose()
@@ -32,15 +35,9 @@ namespace UnityEngine.Rendering.Universal
                 return;
 
             UniversalCameraData cameraData = frameData.Get<UniversalCameraData>();
-#if ENABLE_UPSCALER_FRAMEWORK
             var postProcessingData = frameData.Get<UniversalPostProcessingData>();
             if (postProcessingData.activeUpscaler != null && postProcessingData.activeUpscaler.isTemporal)
                 return; // we are using a temporal upscaler that uses jitter, skip TAA pass
-#else
-            // We are actually running STP which reuses TAA Jitter. Skip TAA pass.
-            if (cameraData.IsSTPRequested())
-                return;
-#endif
 
             // Note that enabling camera jitter uses the same CameraData::IsTemporalAAEnabled(). So if we add any other kind of overrides
             // then we need to put it in CameraData::IsTemporalAAEnabled() as opposed
@@ -49,7 +46,7 @@ namespace UnityEngine.Rendering.Universal
             {
                 // Warn users if TAA is disabled despite being requested
                 if (cameraData.IsTemporalAARequested())
-                    TemporalAA.ValidateAndWarn(cameraData, false);
+                    TemporalAA.ValidateAndWarn(cameraData, ref m_WarnCounter, false);
                 return;
             }
 
