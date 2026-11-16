@@ -23,7 +23,6 @@ public class TeleprompterController : MonoBehaviour
 
     private void Start()
     {
-
         _pickup = GetComponent<BasisPickupInteractable>();
         _pickup.OnPickupUse.AddListener(OnPickupUse);
 
@@ -41,7 +40,8 @@ public class TeleprompterController : MonoBehaviour
         if (BasisControllerInputShim.IsAvailable(BasisControllerHand.Right))
         {
             Vector2 rightStick = BasisControllerInputShim.GetStick(BasisControllerHand.Right);
-            teleprompter.InterpretInput(rightStick.y > 0);
+            Debug.Log(rightStick);
+            if (rightStick.y != 0) teleprompter.InterpretInput(rightStick.y > 0);
         }
         else
         {

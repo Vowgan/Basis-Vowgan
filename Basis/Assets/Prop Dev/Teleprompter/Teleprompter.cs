@@ -1,4 +1,3 @@
-using Basis.Scripts.UI;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
@@ -38,6 +37,8 @@ public class Teleprompter : MonoBehaviour
     public Slider fontSizeSlider;
     public Slider scrollSpeedSlider;
     public TMP_InputField textInput;
+    public Transform handleBone;
+    public Transform bodyBone;
 
     public GameObject scrollTextPanel;
     public GameObject changeSpeedPanel;
